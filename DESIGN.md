@@ -38,9 +38,9 @@ There are three separate tracks:
 | **Faction points** (that faction's own rank, never spent) | ✖ | ✔ that faction only |
 | **Faction relation** (the game's real relation) | ✖ | small: D +1, C +1, B +2, A +3, S +4 |
 
-- **Ranks:** D, C, B, A, S. There is a guild rank (from guild rep) and a rank with each faction (from that faction's points).
+- **Ranks:** E, D, C, B, A, S, SS (E very easy; SS the deadliest fights and one-of-a-kind finds). There is a guild rank (from guild rep) and a rank with each faction (from that faction's points).
 - **Ranks come from lifetime rep.** Spending at the store never lowers it.
-- **Thresholds:** C 100, B 300, A 700, S 1500. Each step costs more than the last.
+- **Thresholds:** D 50, C 150, B 400, A 900, S 1800, SS 3500. Each step costs more than the last.
 - **Rank-up message** that says what the new rank unlocks.
 - **What ranks unlock:** higher store sections, more store slots, a second reserve slot at S.
 - **Rank titles:** later.
@@ -68,6 +68,10 @@ There are three separate tracks:
 | 4 | 15% | none |
 
 ## 5. Difficulty (worked out automatically)
+
+- **One fixed scale for every quest type** (src/Difficulty.cs). Each type turns its challenge into a score; fixed lines turn the score
+  into a rank. Fights: a fighter's damage^1.5 x toughness^0.3, squared, times how many you face. Lines set from anchors known in play:
+  goat/starving bandits E, 1 naked beak thing or 2 swamp lurkers C, 1 leviathan or 1 great beak thing S.
 
 - **Enemies and animals:** stats, weapons, armour, toughness and group size. A group of 4 starving bandits scores low; a pack of strong armoured fighters scores high.
 - **Single characters:** the same measure for one person.

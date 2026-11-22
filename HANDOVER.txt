@@ -1,0 +1,158 @@
+RADIANT QUESTS - HANDOVER FOR CLAUDE (written 2026-11-22, version 0.6.2)
+Read this first in a new session. Also read DESIGN.md (full design), README.md (player-facing features) and NEXT.md (older plan notes).
+KEEP THIS FILE CURRENT (his standing request): update it with every design decision, finding and version bump, editing sections in place.
+
+==========================================================================================
+1. THE USER AND HOW TO WORK
+==========================================================================================
+- Leviathanu. No coding knowledge: Claude writes ALL code, builds, tests; he tests in game and makes design decisions.
+- Plain words, compact replies. Ask him real design choices; otherwise pick a sensible default and say what you picked.
+- He is careful about usage limits; be efficient.
+- Believe him when he reports something odd in game; look for the cause in your own actions first.
+- Commit only when he asks. Git: "C:\Program Files\Git\cmd\git.exe" (not on PATH). Write commit messages to a UTF-8 file WITHOUT BOM
+  (PowerShell 5.1 Set-Content -Encoding utf8 adds a BOM!) and use git commit -F. End with: Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>
+- Radiant Quests has its OWN git repo in C:\KenshiDev\Radiant Quests (branch main). Everything up to 0.6.2 and the test kit is committed
+  (2026-11-22). The outer C:\KenshiDev repo (Manual Combat) ignores "Radiant Quests/".
+
+==========================================================================================
+2. STANDING RULES FOR THIS MOD (he insisted on these)
+==========================================================================================
+- Completely separate from Manual Combat: no shared code, neither depends on/affects the other.
+- COMPATIBILITY AND ROBUSTNESS FIRST. Must work on any load order, vanilla included, and not break on small Meitou updates.
+  * Rules read the game's own data signals (who keeps/owns what, faction fundamental type, unique flag, region spawn lists, live
+    relations), NEVER names or record IDs of specific mods/animals/factions. Fixes must be general rules.
+  * Check live facts at offer / accept / count / hand-in time.
+  * When unsure, leave it out (better one quest fewer than a broken one). Edge cases caused by a more robust system are acceptable.
+  * Every feature fails alone: try/catch, one log line, feature switches itself off, rest keeps running.
+  * Public Meitou mod API only; the one internal hook (paused commands) is optional and logs if missing.
+  * Mod-specific tweaks only via the override file (entries for missing mods are skipped).
+- Modular: feature switches on the settings page.
+- Never copy code from other mods (Guild & Quests, Quest Log) - inspiration only. Declared incompatible with GuildQuests in meitou.json.
+- Mod must never generate important/unique NPCs. Spawns: only ordinary groups, only in regions they naturally spawn in, within a cap.
+- Always read the Meitou source that matches his installed version before using an API (reference checkout C:\KenshiRef\MeitouClient is
+  at commit 00d62467 = nightly 0.22.2-nightly.20261122; git checkout the new commit when he updates; the commit hash is in
+  MeitouClient.dll's ProductVersion).
+- Bump version on every build he gets: meitou.json "version", RadiantQuests.csproj <Version>, README (vX.Y.Z). meitou.json must have
+  no BOM (a BOM made Meitou refuse the mod once) - edit it with sed, check `head -c1 meitou.json` is "{".
+- gameVersion ">=0.22.2", no upper cap.
+
+==========================================================================================
+3. PATHS
+==========================================================================================
+- Project: C:\KenshiDev\Radiant Quests (src\*.cs, RadiantQuests.csproj, meitou.json, overrides.json, build.bat/build.ps1, DESIGN.md,
+  README.md, test\). build.ps1 $wantVersion = 0.22.2-nightly.20261122 (update when he moves to a newer Meitou).
+- Meitou: C:\Kenshi_Meitou\versions\0.22.2-nightly.20261122\ (log.txt there; sessions start at "==== " lines).
+- Kenshi: C:\Steam Games\steamapps\common\Kenshi ; mod installs to mods\RadiantQuests ; mod list data\mods.cfg
+  (RadiantQuests on, GuildQuests off, ManualCombat currently UNTICKED for testing - he did that). Backup of his old mods.cfg:
+  Radiant Quests\mods.cfg.backup-2026-11-22.
+- Workshop: C:\Steam Games\steamapps\workshop\content\233860 (UWE 2142406806, Kaizo 1880985984, Guild & Quests 3834435274,
+  Quest Log 3834157981, Moss Crabs 2841985339 ...).
+- Test save: %LOCALAPPDATA%\Meitou\save\rqtest (Su + Zagan standing in Squin's bar, Shek town). Never save over it.
+- Control dir C:\Kenshi_Meitou\ctl ; env RADIANTQUESTS_TEST_DIR enables the mod's file test channel (rq.cmd / rq.out).
+
+==========================================================================================
+4. TESTING (works well - use it)
+==========================================================================================
+- test\scenario.ps1 : starts rqtest with control dir + test channel, runs ~22 PASS/FAIL checks (board, families, accept while paused,
+  target groups/spawns, real knockout by Su of a spawned target-faction member, group quest, hand-in, abandon, fail, faction tab,
+  release of spawned groups, rank up, The Hub clerk, no errors), quits and waits for the game to exit. ~6-7 min. Run in background.
+  It refuses to start if any MeitouClient is running.
+- test\agent.ps1 (Meitou agent channel: tp, spawn-at x z record --faction id --aggro, order attack, pause/resume, screenshot <path
+  WITHOUT spaces>, ui-click --id hud/ShortcutMapButton, click x y, quit). test\rq.ps1 (mod test channel: clerks, open n, accept n,
+  faccept n, handin id, abandon id, kill id, finish id, skip hours, rep n, report, quests, targets, factions, families, member #quest,
+  catalog, checks, sites, close).
+- test\check-catalog.ps1 : OFFLINE (no game) - runs the mod's catalog on the base game and on his full list, writes
+  test\catalog-base.txt / catalog-full.txt (rank coverage, anchor fights, notes for review). Use after any catalog/difficulty change.
+- BEFORE every install: make sure no game runs (the DLL gets locked; install silently fails) and compare the installed DLL time with
+  bin\Release time. Twice a second game copy appeared - once via computer-use open_application (NEVER use it on the game; it launches a
+  new copy), once because a test game was still closing while I built and started another test.
+- Manual Combat takes over Su when ticked; for tests it's unticked. Fights near towns pull in guards: fight away from towns.
+- Kenshi world units ~10 per metre.
+
+==========================================================================================
+5. DESIGN DECISIONS (all agreed with him)
+==========================================================================================
+Quest givers / guild
+- For now: right click the BARTENDER of any town owned by a guild faction -> "Adventurers' Guild" window (whoever runs the bar; Kenshi often
+  has Trade Ninjas run bars). Faction work is for the TOWN'S OWNER (live). Later: own guild buildings/NPCs (neutral guild faction),
+  still offering the town owner's work.
+- Guild factions: owners of TOWN/Village records with bars, not Bandit-type, not outlaw to most other owners (52 on his list).
+- One of your characters must be within ~30 m (300 units) of the clerk to accept/hand in. Buttons work while paused.
+Ranks and rep
+- Seven ranks E D C B A S SS (E very easy, SS deadliest / one-of-a-kind finds). Lifetime rep thresholds D 50, C 150, B 400, A 900, S 1800,
+  SS 3500 (settings). Spending never lowers rank; fail/abandon penalties lower LIFETIME rep (rank can drop; quests already taken stay).
+- Three tracks: guild rep (shared guild rank + store currency), faction points (rank per faction, Faction tab only, never spent),
+  real faction relation (small: E/D/C +1, B +2, A +3, S +4, SS +5; fail at B+ costs -1..-4).
+- Lower-rank quests pay less: 1 below 90%/90%, 2 below 60%/50%, 3 below 35%/0 rep, 4+ below 15%/0 rep.
+- Fail (time out) costs 50% of quest rep, abandon 25% (+ faction points for faction quests). Faction turns hostile -> its quests called
+  off with no penalty.
+Boards
+- One board per rank, daily. E and D always 2-4 (up to 5 while you're E/D); ranks below yours 1-3; your rank ~90% 1-2; one above 40%;
+  higher 15%. Two tabs: General (outlaws/bandits + hunts; never war targets) and Faction (town owner's live enemies: wars + outlaws).
+- No active quest limit.
+Kill/hunt quests
+- "Defeat N <faction>" / "Hunt N <animal>": any group counts. "Wipe out a group of 12 X (9 needed)": one real existing group near town,
+  marked, done at 75% defeated (setting "Group share"), your side must have hit it; others wiping it first = called off, no penalty.
+- Defeat = knocked out, killed, carried off by you or imprisoned, by your side (hit in last 2 min); each person once (lasting ids).
+- Time: 72 h, each defeat gives back 12 h. Single-kill: no timer (not built). Capture: timer until captured (not built).
+- Starts-war label: Faction-tab target not hostile to you yet -> "makes X hostile to you", +50% cats (setting). Bandit-type/outlaws never.
+Difficulty (one fixed scale for ALL future quest types - src\Difficulty.cs)
+- Fighter strength from data: damage = combat skill (animals: avg of combat skill and "animal strength") x natural weapon mult^0.25
+  x weapon make quality^0.5; toughness = (race max blood x HP mult (x armour for people) / 250)^0.3; unit = damage^1.5 x toughness / 10.
+- Fight score = unit^2 x faced, faced = need + 0.5 x (typical group size - need). Group quests: unit^2 x real size.
+- Fixed lines (start of D,C,B,A,S,SS): 200, 1500, 4000, 15000, 40000, 140000. Anchors he set: goat / starving bandits = E;
+  1 naked beak thing or 2 swamp lurkers = C; 1 leviathan or 1 great beak thing = S (both S is fine).
+- Board picks target + count (2-12) landing on the board's rank. Future fetch/courier quests must map onto the same scale.
+Targets (catalog, src\Catalog.cs - built once from game data)
+- Hunts: animals in animal-only squads (no people). TAME races excluded: kept by a guild faction (squads, town residents, shops) and
+  never in wild spawn lists/nests; shop/new-game-start-only animals excluded. Tame vs wild is per race (Domesticated Bull out, Bull in).
+  Runtime: a guild faction's animals never count and are never spawned.
+- Culls: outlaw factions; variants grouped in families (from spawn lists, fallback by name "Dust X" -> "Dust Bandits"). A faction's own
+  wild patrols listed under regions count as its groups.
+- Enough targets: on accept, if fewer than needed in range, spawn more groups (max 4) or lower the count.
+- Spawns ONLY in the template's natural regions (BIOME_GROUP spawn lists/nests + faction home regions), searched in rings from 1/3 of
+  target range out to "Furthest spawn" (default 60000). Spawned groups tagged "radiantquests:<id>", released when the quest ends.
+- Targets with no natural region (lairs, map-placed, test records) are only offered when enough already live near the town.
+- Target range default 30000 (setting). Map markers: nearest groups, refreshed every 5 s, red "Character" markers.
+Override file
+- overrides.json + overrides\*.json in the mod folder: block, tame, wild, outlaw, guild add/remove, strength multipliers. Empty by
+  default; ids not in the load order are skipped; install never overwrites his edited overrides.json.
+Store, others (designed, NOT built)
+- Rep store per faction at clerks, takes guild rep; random stock with rare items, rerolls every 3 days; higher faction rank = better
+  rare odds; rank-gated sections; reserve = 10% deposit counted toward price, held through one reroll; mystery roll; NO pity system.
+- Fetch/trade quests: commercial goods pay 110-140% of normal price. Very rare items (A/S/SS) placed in the world (reachable container
+  or carried by a roaming leader, never obscure), region-only hint, marker when ~200 m close, delete if never picked up; harsh penalty if
+  picked up then abandoned; never one-of-a-kind/finite gear.
+- Single-kill quests: any existing named character (bounty not required; quest pays on top of bounty). General quests may spawn a mod-made
+  named target only if none fits; Faction quests never spawn NPCs.
+- Capture: hand captive to clerk; guild takes them away (avoid overfilled cages).
+- Courier (to a clerk or a person; needs map tracking), scout, recover; maybe theft (faction only); defend probably too easy.
+- Quest log GUILD tab, toggleable tracker window (tracker exists), rank titles later.
+- CLEAR THE LAIR (agreed, next big item): existing lairs/nests/camps only (never spawned), done at 75% of residents defeated, marked at the
+  lair, ranked by residents. Covers Winged Beak Ogre lair, Iron Roach armoury, bandit camps, hermit animals.
+
+==========================================================================================
+6. CODE MAP (src\)
+==========================================================================================
+- RadiantQuestsMod.cs: entry; settings; Catalog.Build(data, log, Overrides.Load(folder)); AddSystem("guild", GuildSystem, End);
+  AddUi(GuildUi); PausedCommands.Patch; Toast/Log/Detail.
+- GuildSettings.cs: settings page (features, ranks, rewards, time, penalties, targets) + SettingsCopy (copied each tick in Inputs).
+- Catalog.cs: targets from data (Hunts, Culls, WarTargets, families, kept/tame, regions, units, sizes, templates), QuestRank/GroupRank,
+  Check() notes. Difficulty.cs: fixed lines. Overrides.cs: override files.
+- Quests.cs: Ranks tables, Offer, Board (Offers + FactionOffers), Quest, GuildState (saved as JSON, hashed), GuildCommand records.
+- GuildSystem.cs: ITickSystem/IStateHashed/IModSaveData/ICharacterDeathObserver/IWorldReady: clerks (ScanClerks), boards, accept,
+  hand-in, abandon, expire, rep/points/relation (PlayerRelations.Add), target groups + spawning + release, publish GuildView.
+- GuildSystem.Defeats.cs: ICombatHitObserver hits by your side, CheckDefeats (KO/dead/carried/imprisoned), Count, group offers/tags.
+- PausedCommands.cs: Harmony postfix on World.ApplyPausedInterfaceCommands (applies GuildCommands while paused).
+- GuildUi.cs: right-click verb, guild window (General/Faction tabs, rank buttons, offers, your quests), tracker, toasts, map markers.
+- TestChannel.cs: file test channel (see section 4).
+
+==========================================================================================
+7. NEXT STEPS (in rough order)
+==========================================================================================
+1. Clear-the-lair quests (above).
+2. Step 2b of DESIGN build order: fetch and trade quests (score them on the same Difficulty scale; E rank filler).
+3. Rep store (step 3), quest log tab (step 4), single kill / capture / courier / scout / recover (step 5), rare items (step 6).
+4. Own guild buildings / clerks (neutral guild faction; Faction work = town owner).
+Known small things: "Naked Beak Thing " name has a trailing space in data (trim when showing); the guild window wasn't visually
+re-checked after the 7-rank change (rank buttons 110 px wide); determinism check (meitou-tools mod-check rqtest) not run yet.

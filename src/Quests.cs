@@ -7,9 +7,13 @@ namespace RadiantQuests;
 
 public static class Ranks
 {
-    public static readonly string[] Names = ["D", "C", "B", "A", "S"];
+    /// <summary>The seven ranks, easiest first: E (very easy) up to SS (the deadliest fights, one-of-a-kind finds).</summary>
+    public static readonly string[] Names = ["E", "D", "C", "B", "A", "S", "SS"];
 
-    public static string Name(int rank) => Names[Math.Clamp(rank, 0, 4)];
+    /// <summary>The highest rank's index.</summary>
+    public const int Top = 6;
+
+    public static string Name(int rank) => Names[Math.Clamp(rank, 0, Top)];
 
     /// <summary>The share of cats and rep a quest <paramref name="below"/> ranks under yours still pays.</summary>
     public static (double Cats, double Rep) BelowRankPay(int below) => below switch
@@ -24,25 +28,23 @@ public static class Ranks
     /// <summary>The cats a quest of <paramref name="rank"/> pays, from the lowest to the highest of the range.</summary>
     public static (int Min, int Max) Cats(int rank) => rank switch
     {
-        0 => (500, 1500),
-        1 => (1500, 4000),
-        2 => (4000, 10000),
-        3 => (10000, 20000),
-        _ => (20000, 50000),
+        0 => (200, 600),
+        1 => (500, 1500),
+        2 => (1500, 4000),
+        3 => (4000, 10000),
+        4 => (10000, 20000),
+        5 => (20000, 50000),
+        _ => (50000, 120000),
     };
 
     /// <summary>The guild rep a quest of <paramref name="rank"/> pays, before the random spread.</summary>
-    public static int Rep(int rank) => rank switch { 0 => 10, 1 => 20, 2 => 35, 3 => 55, _ => 80 };
+    public static int Rep(int rank) => rank switch { 0 => 5, 1 => 10, 2 => 20, 3 => 35, 4 => 55, 5 => 80, _ => 120 };
 
-    /// <summary>How many to kill for a quest of <paramref name="rank"/>.</summary>
-    public static (int Min, int Max) KillCount(int rank) => rank switch
-    {
-        0 => (2, 4),
-        1 => (3, 6),
-        2 => (4, 8),
-        3 => (5, 10),
-        _ => (6, 12),
-    };
+    /// <summary>The real relation a Faction quest of <paramref name="rank"/> adds when handed in (kept small on purpose).</summary>
+    public static int Relation(int rank) => rank switch { <= 2 => 1, 3 => 2, 4 => 3, 5 => 4, _ => 5 };
+
+    /// <summary>The relation a failed Faction quest of <paramref name="rank"/> costs (none below B).</summary>
+    public static int FailRelation(int rank) => rank switch { <= 2 => 0, 3 => -1, 4 => -2, 5 => -3, _ => -4 };
 }
 
 /// <summary>A quest on a board, not taken yet.</summary>
@@ -57,8 +59,14 @@ public sealed class Offer
     public long Cats;
     public int Rep;
     public bool Taken;
+    /// <summary>A "wipe out this group" quest: one real group (found by <see cref="PlatoonKey"/> when taken).</summary>
+    public bool Group;
+    public int GroupSize;
+    public ulong PlatoonKey;
+    /// <summary>The target is not hostile to you yet: the quest makes it so (labelled, and pays more).</summary>
+    public bool StartsWar;
 
-    public string Describe() => Quest.Describe(Kind, Need, TargetName);
+    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar);
 }
 
 /// <summary>One town's board for one day.</summary>
@@ -67,7 +75,10 @@ public sealed class Board
     public int Site;
     public long Day;
     public string GiverFaction = "";
+    /// <summary>The General tab's quests.</summary>
     public List<Offer> Offers = [];
+    /// <summary>The Faction tab's quests: the giver's enemies now (its wars and the outlaws).</summary>
+    public List<Offer> FactionOffers = [];
 }
 
 /// <summary>A quest you took.</summary>
@@ -88,17 +99,38 @@ public sealed class Quest
     public bool General = true;
     /// <summary>Game hours when it runs out (double.MaxValue: never).</summary>
     public double Deadline;
+    /// <summary>A "wipe out this group" quest: its group is the platoon tagged <see cref="Tag"/>; done at <see cref="Need"/> of
+    /// <see cref="GroupSize"/> defeated.</summary>
+    public bool Group;
+    public int GroupSize;
+    /// <summary>Your side landed a blow on the group (else, if others wipe it out, the quest is called off).</summary>
+    public bool Hit;
+    public bool StartsWar;
+    /// <summary>The people already counted (lasting ids): each counts once, whatever happens to them after.</summary>
+    public List<ulong> Defeated = [];
+
+    /// <summary>The platoon tag of this quest's group or spawned group.</summary>
+    public string Tag => $"radiantquests:{Id}";
+    /// <summary>Where it was taken (the clerk, world X and Z): target groups count within the target range of here.</summary>
+    public float AnchorX, AnchorZ;
+    /// <summary>The look for target groups in range (and the spawn when there are none) is done.</summary>
+    public bool Placed;
 
     public bool Done => Have >= Need;
 
-    public string Describe() => Describe(Kind, Need, TargetName);
+    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar);
 
-    public static string Describe(string kind, int need, string target) => kind switch
+    public static string Describe(string kind, int need, string target, bool group = false, int groupSize = 0, bool startsWar = false)
     {
-        Catalog.Hunt => $"Hunt {need} {target}",
-        Catalog.Cull => $"Kill {need} {target}",
-        _ => $"{kind} {need} {target}",
-    };
+        string text = kind switch
+        {
+            _ when group => $"Wipe out a group of {groupSize} {target} ({need} needed)",
+            Catalog.Hunt => $"Hunt {need} {target}",
+            Catalog.Cull => $"Defeat {need} {target}",
+            _ => $"{kind} {need} {target}",
+        };
+        return startsWar ? $"{text} - makes {target} hostile to you" : text;
+    }
 
     public void Hash(ref StateHasher h)
     {
@@ -114,6 +146,15 @@ public sealed class Quest
         h.Add(Site);
         h.Add(General);
         h.Add(Deadline);
+        h.Add(AnchorX);
+        h.Add(AnchorZ);
+        h.Add(Placed);
+        h.Add(Group);
+        h.Add(GroupSize);
+        h.Add(Hit);
+        h.Add(StartsWar);
+        h.Add(Defeated.Count);
+        foreach (var d in Defeated) h.Add(d);
     }
 }
 
@@ -127,11 +168,21 @@ public sealed class GuildState
     public int NextId = 1;
     public List<Quest> Quests = [];
     public List<Board> Boards = [];
+    /// <summary>Lifetime points with each faction (its Faction board's rank); never spent.</summary>
+    public Dictionary<string, long> FactionPoints = new(StringComparer.Ordinal);
+
+    public long PointsWith(string faction) => FactionPoints.GetValueOrDefault(faction);
 
     public void Hash(ref StateHasher h)
     {
         h.Add(Lifetime);
         h.Add(Balance);
+        h.Add(FactionPoints.Count);
+        foreach (var kv in FactionPoints.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            h.Add(Rng.StableHash(kv.Key));
+            h.Add(kv.Value);
+        }
         h.Add(NextId);
         h.Add(Quests.Count);
         foreach (var q in Quests) q.Hash(ref h);
@@ -142,7 +193,8 @@ public sealed class GuildState
             h.Add(b.Day);
             h.Add(Rng.StableHash(b.GiverFaction));
             h.Add(b.Offers.Count);
-            foreach (var o in b.Offers)
+            h.Add(b.FactionOffers.Count);
+            foreach (var o in b.Offers.Concat(b.FactionOffers))
             {
                 h.Add(o.Slot);
                 h.Add(Rng.StableHash(o.TargetId));
@@ -151,6 +203,10 @@ public sealed class GuildState
                 h.Add(o.Cats);
                 h.Add(o.Rep);
                 h.Add(o.Taken);
+                h.Add(o.Group);
+                h.Add(o.GroupSize);
+                h.Add(o.PlatoonKey);
+                h.Add(o.StartsWar);
             }
         }
     }
@@ -166,7 +222,7 @@ public abstract record GuildCommand : SimCommand;
 public sealed record OpenBoard(CharacterId Clerk) : GuildCommand;
 
 /// <summary>Take offer <paramref name="Slot"/> of the board of <paramref name="Site"/>.</summary>
-public sealed record AcceptOffer(CharacterId Clerk, int Site, int Slot) : GuildCommand;
+public sealed record AcceptOffer(CharacterId Clerk, int Site, int Slot, bool Faction = false) : GuildCommand;
 
 /// <summary>Hand in a finished quest at <paramref name="Clerk"/>.</summary>
 public sealed record HandIn(CharacterId Clerk, int QuestId) : GuildCommand;
@@ -179,3 +235,9 @@ public sealed record TestKill(string TargetId) : GuildCommand;
 
 /// <summary>Test channel only: add guild rep.</summary>
 public sealed record TestRep(int Amount) : GuildCommand;
+
+/// <summary>Test channel only: brings every quest's deadline <paramref name="Hours"/> game hours closer, as if that much time had passed.</summary>
+public sealed record TestSkip(double Hours) : GuildCommand;
+
+/// <summary>Test channel only: counts kills for quest <paramref name="QuestId"/> until it is done.</summary>
+public sealed record TestFinish(int QuestId) : GuildCommand;

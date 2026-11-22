@@ -1,0 +1,20 @@
+// Radiant Quests overrides: only for the rare thing the mod's general rules get wrong in your load order.
+// Ids are record string ids (as the FCS editor shows them, e.g. "200-gamedata.base"). An id your load order doesn't have is simply skipped.
+// Other mods' patches can drop their own .json files into the "overrides" folder next to this one.
+{
+  // Never a quest target: a faction, an animal race, a character or animal record, or a squad template.
+  "block": [],
+
+  // Animal races to treat as tame (never hunted), or as wild even if a friendly faction keeps them.
+  "tame": [],
+  "wild": [],
+
+  // Factions to treat as bandits (General kill quests may target them).
+  "outlaw": [],
+
+  // Factions that do or don't get guild clerks in their bars.
+  "guild": { "add": [], "remove": [] },
+
+  // Multiply a target's fighting strength (and so its rank): "faction or race id": 1.5
+  "strength": {}
+}

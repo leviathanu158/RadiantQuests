@@ -8,7 +8,7 @@
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <LangVersion>latest</LangVersion>
-    <Version>0.1.0</Version>
+    <Version>0.6.2</Version>
     <GenerateDependencyFile>false</GenerateDependencyFile>
     <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
     <Deterministic>true</Deterministic>
@@ -38,6 +38,8 @@
 
   <ItemGroup>
     <Compile Remove="out\**" />
+    <Compile Remove="test\**" />
+    <None Remove="test\**" />
     <None Remove="out\**" />
   </ItemGroup>
 

@@ -51,10 +51,10 @@ public sealed class GuildUi : IUiExtension
 
         _close = r.RegisterAction("close", _ => s_open = false);
         _tab = r.RegisterAction("tab", a => s_tab = a.Argument);
-        _rank = r.RegisterAction("rank", a => s_rankTab = int.TryParse(a.Argument, out int v) ? Math.Clamp(v, 0, 4) : 0);
+        _rank = r.RegisterAction("rank", a => s_rankTab = int.TryParse(a.Argument, out int v) ? Math.Clamp(v, 0, Ranks.Top) : 0);
         _accept = r.RegisterAction("accept", a =>
         {
-            if (int.TryParse(a.Argument, out int slot)) Send(new AcceptOffer(s_clerk, s_site, slot) { Tick = Tick });
+            if (int.TryParse(a.Argument, out int slot)) Send(new AcceptOffer(s_clerk, s_site, slot, s_tab == "faction") { Tick = Tick });
         });
         _handIn = r.RegisterAction("handin", a =>
         {
@@ -66,6 +66,7 @@ public sealed class GuildUi : IUiExtension
         });
 
         r.AddCharacterMenuVerbs(Verbs);
+        r.AddMapMarkers(Markers);
         r.Contribute(UiSlots.Overlay, Overlay, order: 50);
     }
 
@@ -92,6 +93,16 @@ public sealed class GuildUi : IUiExtension
     {
         if (GuildSystem.View is not { } view || !view.Clerks.TryGetValue(m.Target.Id, out var clerk)) return [];
         return [new UiMenuVerb("Adventurers' Guild", () => OpenAt(clerk))];
+    }
+
+    /// <summary>The nearest groups of each hunt and kill quest's target, red, with the quest as label and tooltip.</summary>
+    static IEnumerable<UiMapMarker> Markers(UiMapContext m)
+    {
+        if (!RadiantQuestsMod.Settings.MapMarkers || GuildSystem.View is not { } view) yield break;
+        var colour = new Vector4(0.95f, 0.30f, 0.20f, 1);
+        foreach (var q in view.Quests)
+            foreach (var at in q.Targets)
+                yield return new UiMapMarker(at, "Character", colour, q.Text, $"Guild quest\t{q.Text}\nProgress\t{q.Have}/{q.Need}", 0, 1.2f);
     }
 
     #region Overlay
@@ -167,7 +178,7 @@ public sealed class GuildUi : IUiExtension
         view.Clerks.TryGetValue(s_clerk, out var clerk);
         var w = new UiNode("rq-window")
         {
-            Placement = new UiPlacement(840, 620, Left: new UiLength(-420, 0.5f), Top: new UiLength(-310, 0.5f)),
+            Placement = new UiPlacement(840, 660, Left: new UiLength(-420, 0.5f), Top: new UiLength(-330, 0.5f)),
             Style = _window,
             Flow = UiFlow.Column,
             Padding = 14,
@@ -185,35 +196,44 @@ public sealed class GuildUi : IUiExtension
         w.Children.Add(Label("rq-rep", $"Guild rank {Ranks.Name(view.Rank)}   ·   Rep to spend {view.Balance}   ·   Lifetime rep {view.Lifetime} ({next})",
             _text, 24));
 
-        // Tabs: General, Faction (a later step).
+        // The faction tab ranks by your points with the clerk's faction.
+        bool factionTab = s_tab == "faction" && RadiantQuestsMod.Settings.FactionQuests;
+        var standing = clerk is not null && view.Factions.TryGetValue(clerk.Faction, out var st) ? st : new FactionStanding(0, 0, RadiantQuestsMod.Settings.RankC);
+        if (factionTab)
+            w.Children.Add(Label("rq-frep", $"{clerk?.FactionName}: rank {Ranks.Name(standing.Rank)}   ·   {standing.Points} points"
+                + (standing.NextRankAt < 0 ? " (top rank)" : $" (next rank at {standing.NextRankAt})"), _text, 24));
+
         var tabs = Row("rq-tabs", 30);
-        tabs.Children.Add(Button("rq-tab-g", "General", _tab, "general", true, 150, s_tab == "general"));
-        tabs.Children.Add(Button("rq-tab-f", "Faction (coming soon)", _tab, "faction", false, 200, s_tab == "faction"));
+        tabs.Children.Add(Button("rq-tab-g", "General", _tab, "general", true, 150, !factionTab));
+        if (RadiantQuestsMod.Settings.FactionQuests)
+            tabs.Children.Add(Button("rq-tab-f", $"{clerk?.FactionName} work", _tab, "faction", true, 260, factionTab));
         w.Children.Add(tabs);
 
         // Rank boards.
         view.Boards.TryGetValue(s_site, out var board);
+        var tabOffers = factionTab ? board?.FactionOffers : board?.Offers;
+        int myRank = factionTab ? standing.Rank : view.Rank;
         var ranks = Row("rq-ranks", 30);
-        for (int b = 0; b <= 4; b++)
+        for (int b = 0; b <= Ranks.Top; b++)
         {
-            int n = board?.Offers.Count(o => o.Rank == b && !o.Taken) ?? 0;
-            string caption = $"{Ranks.Name(b)} ({n})" + (b > view.Rank ? " locked" : "");
-            ranks.Children.Add(Button($"rq-rank{b}", caption, _rank, b.ToString(), true, 130, s_rankTab == b));
+            int n = tabOffers?.Count(o => o.Rank == b && !o.Taken) ?? 0;
+            string caption = $"{Ranks.Name(b)} ({n})" + (b > myRank ? " locked" : "");
+            ranks.Children.Add(Button($"rq-rank{b}", caption, _rank, b.ToString(), true, 110, s_rankTab == b));
         }
         w.Children.Add(ranks);
 
         // The selected board's quests.
-        var offers = board?.Offers.Where(o => o.Rank == s_rankTab).ToList() ?? [];
+        var offers = tabOffers?.Where(o => o.Rank == s_rankTab).ToList() ?? [];
         var list = new UiNode("rq-offers") { Placement = new UiPlacement(UiLength.Fill, 210), Flow = UiFlow.Column, Gap = 4 };
         if (board is null) list.Children.Add(Label("rq-wait", "The clerk is fetching today's board...", _dim, 28));
         else if (offers.Count == 0)
-            list.Children.Add(Label("rq-none", s_rankTab > view.Rank
-                ? $"No rank {Ranks.Name(s_rankTab)} work today. You need guild rank {Ranks.Name(s_rankTab)} for these."
+            list.Children.Add(Label("rq-none", s_rankTab > myRank
+                ? $"No rank {Ranks.Name(s_rankTab)} work today. You need rank {Ranks.Name(s_rankTab)} for these."
                 : $"No rank {Ranks.Name(s_rankTab)} work today. The board changes every day.", _dim, 28));
         foreach (var o in offers.Take(6))
         {
             var row = Row($"rq-o{o.Slot}", 32, _row);
-            string pay = o.Rep > 0 ? $"{o.Cats} cats, {o.Rep} rep" : $"{o.Cats} cats, no rep (below your rank)";
+            string pay = o.Rep > 0 ? $"{o.Cats} cats, {o.Rep} rep" + (factionTab ? $" + {o.Rep} points" : "") : $"{o.Cats} cats, no rep (below your rank)";
             row.Children.Add(Label($"rq-ot{o.Slot}", $"  {o.Text}   ·   {pay}", o.Taken ? _dim : _text, 32, new UiLength(-130, 1)));
             string caption = o.Taken ? "Taken" : o.Locked ? "Locked" : "Accept";
             row.Children.Add(Button($"rq-oa{o.Slot}", caption, _accept, o.Slot.ToString(), !o.Taken && !o.Locked, 120));

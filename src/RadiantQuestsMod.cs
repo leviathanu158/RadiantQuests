@@ -24,10 +24,11 @@ public sealed class RadiantQuestsMod : IMod
         s_ctx = c;
         c.AddSettings(Settings);
 
-        Catalog = Catalog.Build(c.Data, Log);
+        Catalog = Catalog.Build(c.Data, Log, Overrides.Load(c.Folder, Log));
+        if (Settings.Debug) foreach (var note in Catalog.Checks) Log("check: " + note);
         Log($"catalog: {Catalog.Hunts.Count} animal kinds to hunt, {Catalog.Culls.Count} groups to cull, {Catalog.GuildFactions.Count} guild factions");
 
-        c.AddSystem("guild", ctx => new GuildSystem(ctx.Data), SystemAnchor.End);
+        c.AddSystem("guild", ctx => new GuildSystem(ctx.Data, ctx.Find<Meitou.Simulation.Population.PopulationSystem>()), SystemAnchor.End);
         c.AddUi(new GuildUi());
         Log(PausedCommands.Patch(c.Harmony));
         Log("ready: right click a faction's bartender and choose Adventurers' Guild");

@@ -8,13 +8,20 @@
 //   clerks                 the clerks loaded now: index, faction, town, position
 //   open <index>           opens the guild window at that clerk (as the right-click row does)
 //   close                  closes it
-//   accept <slot>          the Accept button of that offer on the open board
+//   accept <slot>          the Accept button of that offer on the open board (General tab)
+//   faccept <slot>         the same on the Faction tab
+//   factions               your standing with each faction: rank, points, live relation
 //   handin <quest id>      the Hand in button
 //   abandon <quest id>     the Abandon button
 //   kill <target id>       counts a kill of that faction or race for your quests (as if your character made it)
 //   rep <n>                adds guild rep
 //   catalog                every hunt and cull target with its strength and rank, written to <dir>\rq.catalog
 //   report                 rep, rank, quests and the open board, one line each
+//   targets                each quest's target groups as the map shows them: id, text, and x,z of each group
+//   families               the faction families (variant -> head)
+//   skip <hours>           every quest's deadline comes that many game hours closer (to test running out of time)
+//   finish <quest id>      counts kills for that quest until it is done
+//   quests                 the quests only: id kind target have/need done hours-left
 using System.Globalization;
 using System.Text;
 
@@ -89,6 +96,14 @@ internal static class TestChannel
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
                 Send(new AcceptOffer(clerks[s_openIndex].Id, clerks[s_openIndex].Site, Arg(1)) { Tick = tick });
                 return "sent";
+            case "faccept":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new AcceptOffer(clerks[s_openIndex].Id, clerks[s_openIndex].Site, Arg(1), true) { Tick = tick });
+                return "sent";
+            case "factions":
+                if (view is null) return "no view yet";
+                return string.Join(" | ", view.Factions.Select(kv => string.Create(CultureInfo.InvariantCulture,
+                    $"{RadiantQuestsMod.Catalog.FactionNames.GetValueOrDefault(kv.Key, kv.Key)}: rank {Ranks.Name(kv.Value.Rank)} {kv.Value.Points} pts relation {kv.Value.Relation:0.##}")));
             case "handin":
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
                 Send(new HandIn(clerks[s_openIndex].Id, Arg(1)) { Tick = tick });
@@ -109,6 +124,44 @@ internal static class TestChannel
                 var guild = RadiantQuestsMod.Catalog.GuildFactions;
                 return string.Join(" | ", data.Sites.Where(s => s.Town.Faction is { } f && guild.Contains(f) && s.Town.BarSquads.Count > 0).Take(40)
                     .Select(s => $"{s.Index}: {s.Town.Name} ({RadiantQuestsMod.Catalog.FactionNames.GetValueOrDefault(s.Town.Faction!, "")}) at {s.Position.X:0},{s.Position.Z:0}"));
+            case "targets":
+                if (view is null) return "no view yet";
+                return view.Quests.Count == 0 ? "no quests" : string.Join(" | ", view.Quests.Select(q =>
+                    $"#{q.Id} {q.Text}: {q.Targets.Count} groups" + (q.Targets.Count > 0
+                        ? " at " + string.Join(" ", q.Targets.Select(t => string.Create(CultureInfo.InvariantCulture, $"{t.X:0},{t.Y:0}")))
+                        : "")));
+            case "families":
+                var cat2 = RadiantQuestsMod.Catalog;
+                return cat2.FamilyHead.Count == 0 ? "none" : string.Join(" | ", cat2.FamilyHead.Select(kv =>
+                    $"{cat2.FactionNames.GetValueOrDefault(kv.Key, kv.Key)} -> {cat2.FactionNames.GetValueOrDefault(kv.Value, kv.Value)}"));
+            case "skip":
+                if (p.Length < 2 || !double.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double hours)) return "skip <hours>";
+                Send(new TestSkip(hours) { Tick = tick });
+                return "sent";
+            case "finish":
+                Send(new TestFinish(Arg(1)) { Tick = tick });
+                return "sent";
+            case "quests":
+                if (view is null) return "no view yet";
+                return view.Quests.Count == 0 ? "no quests" : string.Join(" | ", view.Quests.Select(q =>
+                    string.Create(CultureInfo.InvariantCulture, $"#{q.Id} {q.Text} {q.Have}/{q.Need} {(q.Done ? "DONE" : $"{q.HoursLeft:0.0}h")}")));
+            case "member":
+                // A CHARACTER record of a kill target's squads (one without spaces in its id, for the agent channel's spawn-at), or of a quest's target.
+                if (p.Length < 2) return "member <target id or #quest id>";
+                string target = p[1];
+                if (target.StartsWith('#') && int.TryParse(target[1..], out int qid) && view?.Quests.FirstOrDefault(x => x.Id == qid) is { } qv)
+                    target = qv.TargetId;
+                var data2 = RadiantQuestsMod.Context?.Data;
+                if (data2 is null) return "no data";
+                foreach (var tid in RadiantQuestsMod.Catalog.CullTemplates.GetValueOrDefault(target, []))
+                    if (data2.Find(tid) is { } trec)
+                        foreach (var l in trec.GetReferences("squad").Concat(trec.GetReferences("leader")))
+                            if (!l.TargetStringId.Contains(' ') && data2.Find(l.TargetStringId) is { Type: Meitou.Data.Fcs.FcsRecordType.Character, } c && !c.GetBool("unique"))
+                                return target.Contains(' ') ? "none" : $"{l.TargetStringId} --faction {target}";
+                return "none";
+            case "checks":
+                File.WriteAllLines(Path.Combine(s_dir!, "rq.checks"), RadiantQuestsMod.Catalog.Checks);
+                return $"{RadiantQuestsMod.Catalog.Checks.Count} notes written to rq.checks";
             case "catalog":
                 var sb = new StringBuilder();
                 var cat = RadiantQuestsMod.Catalog;
@@ -126,6 +179,8 @@ internal static class TestChannel
                     + $"{(q.Done ? "DONE" : q.HoursLeft.ToString("0.0", CultureInfo.InvariantCulture) + "h")}")));
                 if (s_openIndex >= 0 && s_openIndex < clerks.Count && view.Boards.TryGetValue(clerks[s_openIndex].Site, out var b))
                     r.Append("; board: " + string.Join(" | ", b.Offers.Select(o =>
+                        $"[{o.Slot}] {Ranks.Name(o.Rank)} {o.Text} {o.Cats}c {o.Rep}r{(o.Taken ? " taken" : "")}{(o.Locked ? " locked" : "")}"))
+                        + "; faction board: " + string.Join(" | ", b.FactionOffers.Select(o =>
                         $"[{o.Slot}] {Ranks.Name(o.Rank)} {o.Text} {o.Cats}c {o.Rep}r{(o.Taken ? " taken" : "")}{(o.Locked ? " locked" : "")}")));
                 return r.ToString();
             default:

@@ -68,6 +68,7 @@ $stage = Join-Path $here "out\$modName"
 New-Item -ItemType Directory -Force $stage | Out-Null
 Copy-Item $dll.FullName $stage -Force
 Copy-Item (Join-Path $here "meitou.json") $stage -Force
+Copy-Item (Join-Path $here "overrides.json") $stage -Force
 
 function Write-FcsString([System.IO.BinaryWriter]$w, [string]$s) { $b = [System.Text.Encoding]::ASCII.GetBytes($s); $w.Write([int]$b.Length); $w.Write($b) }
 $fs = [System.IO.File]::Create((Join-Path $stage "$modName.mod"))
@@ -91,6 +92,8 @@ if (-not $KenshiDir -or -not (Test-Path $KenshiDir)) {
 }
 $target = Join-Path $KenshiDir "mods\$modName"
 New-Item -ItemType Directory -Force $target | Out-Null
-Copy-Item (Join-Path $stage "*") $target -Force
+# Everything but overrides.json, which a player may have edited: that one only when the install has none yet.
+Get-ChildItem $stage -File | Where-Object { $_.Name -ne "overrides.json" -or -not (Test-Path (Join-Path $target "overrides.json")) } |
+    ForEach-Object { Copy-Item $_.FullName $target -Force }
 Say "Installed to $target" Green
 Say "Now open the Meitou launcher, tick RadiantQuests in the mod list, and press Play." Green
