@@ -1,0 +1,12 @@
+{
+  // Radiant Quests for Meitou: repeatable guild quests for cats and rep, with ranks D to S.
+  "id": "radiantquests",
+  "version": "0.1.0",
+  "apiVersion": 2,
+  "assemblies": ["RadiantQuests.dll"],
+  "entry": "RadiantQuests.RadiantQuestsMod",
+  // Another guild/quest-board mod: the two would hand out overlapping boards and rewards, so Meitou refuses to run them together.
+  "incompatible": ["GuildQuests"],
+  // Built against Meitou 0.22.2-nightly.20261121. No upper limit.
+  "gameVersion": ">=0.22.2"
+}

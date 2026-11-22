@@ -1,0 +1,5 @@
+bin/
+obj/
+out/
+*.zip
+mods.cfg.backup-*

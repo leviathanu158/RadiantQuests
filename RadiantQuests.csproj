@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- Radiant Quests for Meitou. The game supplies every Meitou assembly and 0Harmony at run time, so they are referenced from your Meitou
+       folder with Private="false" and never copied. build.ps1 finds that folder for you; or pass -p:MeitouDir=... -->
+  <PropertyGroup>
+    <TargetFramework>net11.0</TargetFramework>
+    <AssemblyName>RadiantQuests</AssemblyName>
+    <RootNamespace>RadiantQuests</RootNamespace>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Version>0.1.0</Version>
+    <GenerateDependencyFile>false</GenerateDependencyFile>
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+    <Deterministic>true</Deterministic>
+  </PropertyGroup>
+
+  <!-- With only a .NET 10 SDK installed, compile against the .NET 11 framework files inside the Meitou folder instead. -->
+  <PropertyGroup Condition="$([MSBuild]::VersionLessThan('$(NETCoreSdkVersion)', '11.0'))">
+    <TargetFramework>net10.0</TargetFramework>
+    <DisableImplicitFrameworkReferences>true</DisableImplicitFrameworkReferences>
+    <NoStdLib>true</NoStdLib>
+    <NoCompilerStandardLib>true</NoCompilerStandardLib>
+    <GenerateTargetFrameworkAttribute>false</GenerateTargetFrameworkAttribute>
+    <UseGameFramework>true</UseGameFramework>
+  </PropertyGroup>
+  <ItemGroup Condition="'$(UseGameFramework)' == 'true'">
+    <GameFramework Include="$(MeitouDir)\System*.dll;$(MeitouDir)\mscorlib.dll;$(MeitouDir)\netstandard.dll" Exclude="$(MeitouDir)\*Native*.dll" />
+    <Reference Include="@(GameFramework)"><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Reference Include="MeitouClient"><HintPath>$(MeitouDir)\MeitouClient.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Meitou.Simulation"><HintPath>$(MeitouDir)\Meitou.Simulation.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Meitou.Core"><HintPath>$(MeitouDir)\Meitou.Core.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="Meitou.Data"><HintPath>$(MeitouDir)\Meitou.Data.dll</HintPath><Private>false</Private></Reference>
+    <Reference Include="0Harmony"><HintPath>$(MeitouDir)\0Harmony.dll</HintPath><Private>false</Private></Reference>
+  </ItemGroup>
+
+  <ItemGroup>
+    <Compile Remove="out\**" />
+    <None Remove="out\**" />
+  </ItemGroup>
+
+  <Target Name="CheckMeitouDir" BeforeTargets="ResolveAssemblyReferences">
+    <Error Condition="!Exists('$(MeitouDir)\MeitouClient.dll')"
+           Text="MeitouClient.dll not found in MeitouDir='$(MeitouDir)'. Run build.bat, or pass -p:MeitouDir=your Meitou version folder." />
+  </Target>
+</Project>
