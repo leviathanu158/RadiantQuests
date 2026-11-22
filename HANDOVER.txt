@@ -120,7 +120,8 @@ Override file
 Store, others (designed, NOT built)
 - Rep store per faction at clerks, takes guild rep; random stock with rare items, rerolls every 3 days; higher faction rank = better
   rare odds; rank-gated sections; reserve = 10% deposit counted toward price, held through one reroll; mystery roll; NO pity system.
-- Fetch/trade quests: commercial goods pay 110-140% of normal price. Very rare items (A/S/SS) placed in the world (reachable container
+- Fetch/trade quests: commercial goods pay 110-140% of normal price. Very rare items (A/S/SS) are placed in the world ONLY when not enough
+  of them exist on the map already (what counts as "enough" is still to be worked out); when placed: (reachable container
   or carried by a roaming leader, never obscure), region-only hint, marker when ~200 m close, delete if never picked up; harsh penalty if
   picked up then abandoned; never one-of-a-kind/finite gear.
 - Single-kill quests: any existing named character (bounty not required; quest pays on top of bounty). General quests may spawn a mod-made
@@ -150,6 +151,21 @@ Store, others (designed, NOT built)
 ==========================================================================================
 7. NEXT STEPS (in rough order)
 ==========================================================================================
+NEXT SESSION (agreed 2026-11-22; his limit resets 1:10 PM): THE FRAMEWORK REFACTOR FIRST, no new gameplay.
+0. He installed a new Meitou nightly (0.22.2-nightly.20261122.2). First: update build.ps1 $wantVersion, check out the matching commit in
+   C:\KenshiRef\MeitouClient (hash in MeitouClient.dll ProductVersion), rebuild, run test\scenario.ps1 and test\check-catalog.ps1.
+   Goal he set: small Meitou updates must never break the mod (big ones may need a look).
+Framework plan (approved direction):
+ a. Quest types as plug-ins: each answers offer candidates (+ difficulty score on the shared scale), still possible?, progress events,
+    map points, cleanup. Shared once: boards, ranks, pay, rep, timers, penalties, window, tracker, markers, saving.
+ b. Content providers from game data: Fights (now), Items (value, shops, drops, how many exist on the map: decides when a rare item may
+    be placed), Places (lairs, camps, nests, towns, regions). Each with self-checks and override entries.
+ c. ONE layer that talks to Meitou (groups, characters, relations, spawning, regions, items), each part guarded and switching itself off
+    alone, so a Meitou change touches one file.
+ d. Testing built in: per-type test-channel commands and scenario steps, per-provider offline checks, determinism check (mod-check), and
+    runtime log checks behind a toggle (off by default: performance).
+ Success = existing scenario passes unchanged. Then clear the lair, fetch/trade, rep store.
+
 1. Clear-the-lair quests (above).
 2. Step 2b of DESIGN build order: fetch and trade quests (score them on the same Difficulty scale; E rank filler).
 3. Rep store (step 3), quest log tab (step 4), single kill / capture / courier / scout / recover (step 5), rare items (step 6).
