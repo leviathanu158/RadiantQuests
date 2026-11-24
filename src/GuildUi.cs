@@ -20,7 +20,7 @@ public sealed class GuildUi : IUiExtension
 
     static readonly List<(string Text, long Until)> s_toasts = [];
 
-    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "";
+    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "";
     string _window = "", _title = "", _text = "", _dim = "", _button = "", _buttonOn = "", _row = "", _toast = "", _tracker = "";
 
     public void Register(UiRegistration r)
@@ -56,6 +56,7 @@ public sealed class GuildUi : IUiExtension
         {
             if (int.TryParse(a.Argument, out int slot)) Send(new AcceptOffer(s_clerk, s_site, slot, s_tab == "faction") { Tick = Tick });
         });
+        _reroll = r.RegisterAction("reroll", _ => Send(new RerollBoard(s_clerk) { Tick = Tick }));
         _handIn = r.RegisterAction("handin", a =>
         {
             if (int.TryParse(a.Argument, out int id)) Send(new HandIn(s_clerk, id) { Tick = Tick });
@@ -207,6 +208,8 @@ public sealed class GuildUi : IUiExtension
         tabs.Children.Add(Button("rq-tab-g", "General", _tab, "general", true, 150, !factionTab));
         if (RadiantQuestsMod.Settings.FactionQuests)
             tabs.Children.Add(Button("rq-tab-f", $"{clerk?.FactionName} work", _tab, "faction", true, 260, factionTab));
+        if (view.Boards.TryGetValue(s_site, out var bv))
+            tabs.Children.Add(Button("rq-reroll", $"New quests ({bv.RerollCost} rep)", _reroll, "", bv.RerollCost <= view.Balance, 220));
         w.Children.Add(tabs);
 
         // Rank boards.
@@ -233,7 +236,7 @@ public sealed class GuildUi : IUiExtension
         foreach (var o in offers.Take(6))
         {
             var row = Row($"rq-o{o.Slot}", 32, _row);
-            string pay = o.Rep > 0 ? $"{o.Cats} cats, {o.Rep} rep" + (factionTab ? $" + {o.Rep} points" : "") : $"{o.Cats} cats, no rep (below your rank)";
+            string pay = o.Rep > 0 ? $"{o.Cats} cats, {o.Rep} rep" + (factionTab ? $" + {o.Rep} points" + (o.Relation > 0 ? $", relations +{o.Relation}" : "") : "") : $"{o.Cats} cats, no rep (below your rank)";
             row.Children.Add(Label($"rq-ot{o.Slot}", $"  {o.Text}   ·   {pay}", o.Taken ? _dim : _text, 32, new UiLength(-130, 1)));
             string caption = o.Taken ? "Taken" : o.Locked ? "Locked" : "Accept";
             row.Children.Add(Button($"rq-oa{o.Slot}", caption, _accept, o.Slot.ToString(), !o.Taken && !o.Locked, 120));

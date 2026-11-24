@@ -1,4 +1,4 @@
-RADIANT QUESTS - HANDOVER FOR CLAUDE (written 2026-11-22, version 0.6.2)
+RADIANT QUESTS - HANDOVER FOR CLAUDE (updated 2026-11-24, version 0.7.11)
 Read this first in a new session. Also read DESIGN.md (full design), README.md (player-facing features) and NEXT.md (older plan notes).
 KEEP THIS FILE CURRENT (his standing request): update it with every design decision, finding and version bump, editing sections in place.
 
@@ -17,6 +17,10 @@ KEEP THIS FILE CURRENT (his standing request): update it with every design decis
 ==========================================================================================
 2. STANDING RULES FOR THIS MOD (he insisted on these)
 ==========================================================================================
+- HIS PRIORITIES FOR ALL WORK (restated 2026-11-22): (1) compatibility with CONTENT mods: creatures/factions added or removed are picked up
+  or dropped automatically from what's loaded; (2) robustness: failsafes everywhere, degrade instead of break; (3) reliability: no soft-locks,
+  no impossible quests; (4) survive small Meitou updates (big ones may need an update); (5) modular; (6) low performance overhead (to be
+  measured: benchmark with/without the mod later; keep per-tick work small, surveys/boards only on demand or every few seconds).
 - Completely separate from Manual Combat: no shared code, neither depends on/affects the other.
 - COMPATIBILITY AND ROBUSTNESS FIRST. Must work on any load order, vanilla included, and not break on small Meitou updates.
   * Rules read the game's own data signals (who keeps/owns what, faction fundamental type, unique flag, region spawn lists, live
@@ -149,8 +153,208 @@ Store, others (designed, NOT built)
 - TestChannel.cs: file test channel (see section 4).
 
 ==========================================================================================
+6b. HIS PLAY-TEST FEEDBACK (2026-11-22, file "Problems identified for Radiant Quests.txt" in his Downloads) + agreed direction
+==========================================================================================
+ 1. Faction boards often have nothing at your own rank (e.g. E0 D3 C0 B0 A1): faction rank can't be climbed. Need: always >=1 offer you can
+    take at your rank (per tab).
+ 2. Goats are deceptively hard on his list (9 goats at E is far harder than 2 starving bandits). Re-check animal strength with his mods.
+ 3. CRASH (saved in Radiant Quests\crash-logs6-11-22_*): Windows APPCRASH 0xC00000FD = STACK OVERFLOW, module unknown (managed code),
+    no dump. Log ends mid-fight (Band of Bones vs Shek guards, Squin). 15 code mods ran (Manual Combat, LastStand, ItemMarkers, WhoIsTalking..).
+    Radiant Quests has no recursion; verdict: unlikely ours, not provable. Next crash: Debug log on + Windows crash dumps (he enables).
+ 4. SOFT-LOCKS: hunts asking 11 springbok with too few at the markers; an animal spawned somewhere unreachable (crop louse) and marked.
+    He wants: check what's really there (spawn if short) AND a grace margin: if X are there, ask for X-n (n per quest type, tunable).
+ 5. Range too big: Stoat quest pointed to Okran's Pride / Northern Coast. Quests should be local (in-universe sense); goats there were too few
+    and partly in water. Don't mark every goat on the map either (OP).
+ 6. Variety: Sho-Battai had no skimmer quest, Mongrel no fogmen quest; starving bandits on every board. Boards should reflect what actually
+    lives around the town (with mods), many kinds to pick from; doubles OK. Wants a BOARD REROLL for a little rep.
+ 7. Antelopes x10 at Sho-Battai: no marker, count dropped to 1 (same at Hope: iron wasps, skimmers, skull collectors) - quests offered for
+    targets that aren't around. Same root as 4/5/6: boards must be built from what is actually near (or spawnable near) the town.
+ 8. Rewards: cats too low at low ranks; rep amounts and rank thresholds should be higher (rep store later); rank-up rewards separate from
+    quests; below-rank quests: his lean = keep cats, cut rep (or same rewards and let people grind). NEEDS HIS DECISION.
+ 9. Idea: location danger in difficulty (goat quest led into cannibal land). Tentative.
+10. Quest givers where there is no bar (Hive villages, Flats Lagoon...); faction work there TBD; idea: smuggling quests (illegal goods).
+11. Right-click menu entry sits next to "attack unprovoked": wants a dialogue option to open the guild (and the guild hall later).
+12. EXPLOIT: re-taking a goat quest marked the goats already knocked out; he finished them while down. Defeats must only count people who
+    were standing when the quest was taken (or fought after), and markers must not show groups that are all down/dead (deceptive).
+13. SS "11 iron hornet hives": right difficulty, but tedious. Consider caps / preferring group-lair quests at high ranks.
+HIS DECISIONS (2026-11-22, after the feedback):
+ - Impossible quests: survey what's near; at ACCEPT, spawn more (natural regions, local) if too few; counts keep a grace margin.
+ - Markers: when the marked groups can't cover what's still needed (down, dead, gone), mark NEW groups (other existing ones, or spawn), so
+   the player is never left searching for nothing.
+ - Rewards: raise everything; cats only SLIGHTLY (money must stay hard), rep INFLATED (more per quest, much more to rank up) so the rep store
+   can range from very cheap to very expensive. Below-rank quests: FULL rewards (may revisit). Once a town's board is cleared for a rank,
+   no new quests of that rank appear there until the board refreshes (1 day, maybe 2: setting).
+ - Start the FRAMEWORK REBUILD now, with modularity, reliability, compatibility and robustness in mind.
+Proposed direction (not built yet): fold these into the framework refactor's shared parts: a LOCAL target survey per town at board time
+(what lives within a local radius / the town's regions, real counts, standing members only) feeding boards (variety, guaranteed own-rank
+offers, reroll), counts with a grace margin, reachable spawns, honest markers; then rewards rework once he decides.
+
+==========================================================================================
 7. NEXT STEPS (in rough order)
 ==========================================================================================
+STATE 0.7.11 (2026-11-24): CLEANUP + OPTIMISATION, behaviour unchanged (catalog check identical, mod-check PASS, FULL SCENARIO 26/26 PASS):
+ - WorldAccess.Groups is built once per tick and shared (IReadOnlyList), renewed after Spawn/TagGroup/ReleaseNatural/Despawn.
+ - KillQuests.Track: one group pass (groups / marked / standing). Catalog.FindTarget + IsOutlaw: dictionary lookups replace list
+   searches (TargetOf, area danger, lairs, war label). One RingSpot replaces NaturalSpot/WildSpot. Template sizes in one pass.
+ - Removed dead code: WorldAccess.Release, WorldAccess.StandingAt, Quest.Placed, Catalog.HuntLines/GroupLines/Lines (ranks use the
+   fixed Difficulty lines). Stale/misplaced doc comments fixed.
+ - scenario.ps1 checks updated to his later rules: "no quest twice" = target per rank and kind (groups/camps by their own key);
+   "faction quest changes relation as offered" (E/D none, C+ per offer, " +Nrel" parsed).
+HOW TO ADD A QUEST TYPE (keep the framework modular):
+ - One class implementing IQuestType (Quests\), registered in QuestTypes.All. Never read Meitou directly: add what you need to
+   WorldAccess (guarded area). Targets come from Catalog (data-driven), never named in code.
+ - Candidates: set Offer.Score (fight score), Present (targets really around now) or Stray, and SetAt(where the targets are) so the
+   engine applies area danger. Same quest twice is blocked by KeyOf (rank+kind+target, or its group/camp key).
+ - Accept: spawn only here (guild.SpawnNear, tags the group with q.Tag); Track: markers, guild.OutOfReach for stuck targets, CallOff
+   when nothing can be done (no penalty). Spawned groups are cleared by GuildSystem.Cleanup through the tag automatically.
+ - Rival kills / pay share: today only Hunt and Defeat (GuildSystem.LostToOthers checks q.Kind). A new fighting type must opt in:
+   make it a shared option on IQuestType when the first such type is added.
+STATE 0.7.9-0.7.10 (2026-11-24, his rules; quick-tested, mod-check PASS; full scenario NOT run yet):
+ - WHEN A QUEST RUNS SHORT (targets gone, stuck or beaten): 1) other real targets are marked; 2) close enough: missing within the
+   margin (25% of the count, at least 1) -> count lowered, full reward; 3) top-up spawn only with a group that FITS (its largest size,
+   Catalog.TemplateMaxSize, no more than what is missing, +1 at E/D), at most 4, once a game hour; 4) nothing fits -> count lowered to
+   what you did + what still stands. Never while you are fighting the quest's own targets (GuildSystem.Fighting(world, q); blows on
+   others, e.g. a passing group, don't count).
+ - RIVAL KILLS FROM EVIDENCE (Quest.LostToOthers, hashed): a target that dies with no blow of yours (Died) or is seen down in a marked
+   group with no blow of yours (KillQuests.Track) is lost to others. Unseen losses are bugs. Pay at hand-in = Quest.PayShare =
+   1 - (rival losses not later defeated by you, capped at FullNeed - Have) / FullNeed (count at accept): cats, rep, faction points and
+   relation (floored). Bugs/stuck: full pay. Toast says "(N were beaten by others: X% of the pay)". Tested: Black Dragon Ninjas and
+   Dust Bandits fighting at the antelope spawn beat 5, Su 1 -> done 1/1, paid 20% (90 cats, 9 rep).
+ - BOARD COUNTS FROM THE SMALLEST GROUP SIZE (Catalog.TemplateMinSize, the low end of every range): Hunt 5 Antelope for a 6-8 group;
+   difficulty still from the usual size. Whatever the spawn rolls covers the count with the margin.
+ - The quest list/tracker shows the reward as it stands (Quest.CatsNow/RepNow with the pay share; tested 430c -> 260c at 60%).
+ - Known: the antelope spawn spot near Squin (rqtest) is where those ninjas and bandits fight: good for rival tests.
+MEITOU PR (2026-11-24): https://github.com/VlcekM/MeitouClient/pull/1324 "Mod API: SpawnPlatoon member cap (maxMembers)" from his fork
+leviathanu158/MeitouClient, branch spawn-platoon-size-cap (working copy C:\KenshiDev\MeitouClient-pr; PR text MeitouClient-pr-description.md).
+SpawnPlatoon(..., money, maxMembers): plan cut to N (leader first), kept via Platoon.MemberCap (saved "meitou mod cap", hashed when set).
+When merged and he is on a nightly with it: WorldAccess.Spawn should pass maxMembers = what the quest needs (detect the parameter by
+reflection/overload so older Meitou still works), and boards can offer any count again. Until then quests use real group sizes.
+STATE 0.7.8 (2026-11-23, his rules; quick-tested, mod-check PASS; full scenario NOT run yet):
+ - BROUGHT-IN COUNTS = REAL GROUP SIZES: a quest that spawns its targets asks for a group's size less the margin (size - floor(size x
+   CountMargin)): Hunt 6 Antelope (group of 7), Hunt 4 Springbok, Defeat 6 Starving Bandits; ranked against that group (KillQuests
+   GroupCounts). Spawning picks the smallest group holding what is still needed. Deleting extras from a spawned group was considered and
+   NOT done: groups far away have no characters yet (made when you come near), so trimming would be unreliable.
+ - BEATEN BY OTHERS: a quest whose brought-in group(s) have nobody standing before you made progress (Quest.Spawned, Have 0) is called
+   off, no penalty. The group's removal timer starts when it is first seen with nobody standing (SpawnDefeats), then the usual rule
+   (DefeatedHours after, you away). Tested: herd killed by debug kill -> "beaten by someone else" + called off.
+ - LASTING NOTICES (Notices.cs): called off, failed (out of time) and taken back (giver hostile) go to the game's message panel AND
+   message log via PlayerInterface.Notice (internal; instance caught in a PlayerInterface.Steer prefix; "message log: on" in the log).
+   He saw the message in game (2026-11-23): works.
+STATE 0.7.7 (2026-11-23, his rules; quick-tested, mod-check PASS; full scenario NOT run yet):
+ - SPAWN CLEANUP: a brought-in (ModSpawned, tagged) group is removed WHOLE (DespawnPlatoon) once not needed (its quest ended, gave up on it,
+   or nobody in it stands) at DefeatedHours (3.5) after its last defeat (GuildState.SpawnDefeats by platoon key, hashed; at once if never
+   fought), only when none of yours is within 3000 (else as soon as all have left). A member carried or jailed by you: the group is given
+   back to the game instead. Runs in SlowWorld every 10 s: Meitou allows character removal ONLY in Commit/SlowWorld (Schedule/Inputs throw
+   "characters are removed in the commit or the slow world only"); a refused removal just retries. Tested: unfought spawn gone 10 s after
+   abandon; fought crawlers stayed, gone after ~3.5 h with Su away.
+ - OUT-OF-REACH FAILSAFE (GuildSystem.OutOfReach, any type can use it): one of yours within 1500 of a target group for StuckHours (1) with
+   none within 400 (no fight) and no progress -> that group is given up (Quest.Skipped, hashed): not marked/counted; kill quests then
+   refill elsewhere or end (counted if progress, else called off, no penalty); a group quest ends the same way. Not tested in game yet
+   (needs an unreachable group).
+ - SPAWN SIZE: the template that fits the count (smallest holding what is still needed, Catalog.TemplateSize = people + animals); Hunt 2
+   Carrion Crawler now spawns 2, not 13. A count quest asks for N of a kind, not a whole group (Wipe out / Clear camp are the whole-group
+   kinds).
+STATE 0.7.5-0.7.6 (2026-11-23, his rules; quick-tested, mod-check PASS; full scenario NOT run yet):
+ - SAME QUEST never twice on a board, within a tab or across tabs (KeyOf: a group quest = that group, a camp = that camp, else rank+kind+
+   target). Different groups of the same enemy are fine. A quest that fits both tabs goes to one by a roll: General 60%, Faction 40%.
+ - FILLING (per rank, cap rolled 5..7): every REAL target always goes up first, to the cap. Then brought-in (spawned) work: at ranks you
+   have reached a MINIMUM is filled (E, D 3; C 2; B 1); each slot above it rolls 60% (at/below your rank), 40% (one above), 15% (higher);
+   inside each, 15% (StrayChance) a kind from outside the region. A rank with nothing real: above yours BoardCount (rare); A/S/SS you have
+   reached only by EmptyRankChance (45/18/9%). Brought-in A/S/SS capped per board (both tabs): 3/2/1 (real ones never count).
+ - SPAWNS: only when a quest is ACCEPTED (and refills while it runs), never for the board. When a quest ends any way (hand-in, fail,
+   abandon, expiry, call-off) its SPAWNED groups are despawned (PopulationSystem.DespawnPlatoon) unless one of yours is within 3000 of them
+   (those become ordinary roamers); groups the game made and the mod only tagged are just given back. Tested: Antelope x6 spawned at accept,
+   removed on abandon.
+ - AREA DANGER (his rules): only groups HOSTILE to the player faction now (grazers, neutrals, friends never) and hostile camps/nests within
+   1500 of the targets' place, never the quest's own targets; DangerShare 0.25 of their strength; at most +1 rank; "(dangerous area)" on
+   the offer. Region-wide data danger was tried and dropped (it lifted every quest). Log: "dangerous area: ...".
+ - Boards wait for the place around to load (groups near, or 60 s) before posting (_siteSeen, hashed): arriving by teleport no longer
+   posts a board with only brought-in work.
+ - TESTS: use the reroll ("rep 600" "reroll") so a board shows fresh rolls; the reload-proof board otherwise repeats the same one every
+   load of rqtest. Per-rank board lines in the log: "<Tab> <rank> (you X): cap, real -> up, brought in (minimum, local, other regions)".
+STATE 0.7.4 (2026-11-23, his rules; quick-tested, mod-check PASS; full scenario NOT run yet). He now lets Claude decide first iterations
+and wants Claude to keep brainstorming fixes and features.
+ - NO REPEATS PER RANK: one target once per rank (KeyOf = rank + target id, any quest kind). E and D of the same target is fine.
+ - FILLING A RANK: real targets first (Candidate.Present), up to a cap rolled 5..MostPerRank (7). Then a chance (BringChance: 50% at or
+   below your rank, 30% one above, 10% higher) to bring in ONE new kind (spawned at accept, local regions); with the roll-within-the-roll
+   "Out-of-region quests" (StrayChance 0.1) it is a kind not native to the region (Offer/Quest.Stray; spawned in any region where wild
+   things live, Catalog.WildRegions, WildSpot). A rank with nothing real gets BoardCount spawned offers or none (high ranks stay rare).
+ - CAMPS (LairQuest rewritten): ranked by EVERYONE living there (data). Clearing = everyone AT the camp, judged by a ROSTER (Quest.Roster,
+   Rostered, hashed): taken when one of yours first comes within the leash; the camp's own people (squad home = site) standing inside the
+   area (site radius clamped 400..1000); passers-by never. Adapts: own people coming home join; roster members beyond the leash (2x area)
+   aren't needed while away. Checked after every defeat and every few seconds. Stragglers: Group share down + none within reach (0.6x area,
+   300..600) of your squad while you are at the camp for StragglerHours (2) -> cleared. Wiped/changed hands before you fought -> called off.
+   Tested: Lost Library Outpost roster 17, cleared 17/17 by Su, no chasing of far spiders.
+ - RELOAD-PROOF BOARDS: boards are posted when a town's clerk is first around in a period (ScanClerks -> BoardFor), stored in the save,
+   seeded per town+period+rerolls. Tested: same Squin board opened at once vs after 60 s of play on a fresh load.
+ - test\quick.ps1 -WaitFirst <s>: play that long before opening the clerk.
+IDEAS / RECOMMENDATIONS (Claude, 2026-11-23, for him to pick from):
+ - Location danger (#9): score the area a quest sends you to (strength of hostile groups standing near the target) and add a share of it to
+   the quest score; show "dangerous area" on the offer.
+ - Bounty: defeat one named leader (a squad leader of a real group or camp), bring the body or capture alive for more pay.
+ - Capture: bring someone alive to the clerk's town prison (Kenshi's carry/jail), uses Taken.
+ - Rescue: a captive held at a camp (spawned prisoner), bring them home.
+ - Retrieve: an item placed in a camp container (needs an Items layer in WorldAccess).
+ - Fetch/trade, courier, smuggling (#10 idea): need the Items layer and town legality data.
+ - Defend the town: a timed raid group spawned heading for the town; done when it is beaten before it arrives.
+ - Rank-up trials: one special quest to reach the next guild rank (rank-up reward separate from quests, his #8 idea).
+ - Quest log tab; rep store (cheap to expensive, his plan); guild halls.
+ - Framework note (his point): every new type is one IQuestType; the board rules (present first, no repeats per rank, cap, bring-in roll)
+   are type-agnostic, so new types only answer Candidates (with Present/Stray), Accept, Counts, Track, End.
+STATE 0.7.3 (2026-11-23, his decisions; each part quick-tested, full scenario NOT run yet - do it once the batch is done):
+ - RELATIONS (his rule: no easy road to 100): Faction quests E and D give NO relation (faction points only). C 1-2, B 2-3, A 3-4, S 4-5,
+   SS 5-6: the higher number when the quest sits in the harder half of its rank (Difficulty.Within on the offer's fight score, Offer.Score;
+   Quest.Relation saved/hashed, -1 = older quest -> rank's low end). Shown on Faction offers ("relations +N"). Own-rank climbing to faction
+   rank A comes to roughly +50 (his target 50-60). Failure penalties unchanged (FailRelation).
+ - CLERKS WITHOUT A BAR (#10): a town with no bartender uses its traders (shop building / designation 1), else its headquarters (8). Catalog
+   guild owners also count towns/villages with shop or HQ residents (no new factions on his list). Verified: Flats Lagoon (Tech Hunters),
+   Hive Village E (Western Hive) have clerks and boards.
+ - FACTION TAB NEVER EMPTY FOR YOU: if the town's enemies around are all above your rank, its own pest work (General kinds: hunts, outlaws)
+   at your rank or below is posted as faction work (Flats Lagoon at E: Hunt 3 Carrion Crawler).
+ - BOARDS (his rule 2026-11-23): what is REALLY AROUND gets a quest: per rank, every present target (Candidate.Present: standing groups that
+   cover the count with the margin, real groups, lairs) up to "Most quests per rank" (setting, 5). Offers that SPAWN their targets are used
+   only for a rank with nothing present (old BoardCount rules). Picks give each quest kind a fair turn (kind first, then weighted offer).
+ - LAIRS: rank from what you must defeat (QuestScore of need + half the rest), not the whole camp; an owner faction with no roaming squads
+   (common with mods) is judged by its faction id. Near Squin: Lost Library Outpost (B) now offered on both tabs; the other camps near
+   are owned by factions not hostile to Shek (correctly left out). Log line "lairs near (tab): ..." in test/debug mode explains each.
+ - Open from the file: #11 dialogue option needs a game-data dialogue record (AddDialogueEffect exists; needs a .mod record) - later.
+NIGHTLY 0.22.2-nightly.20261123.2 (commit c7a5b87, he moved to it 2026-11-23): C:\KenshiRef\MeitouClient checked out at it; diff vs d0fa449
+checked: nothing the mod uses was removed or changed (World.ApplyPausedInterfaceCommands, PopulationData/System, modding API: additions
+only). build.ps1 $wantVersion updated; builds clean.
+TESTING RULE (his, 2026-11-23): while adding features, test ONLY the new feature with test\quick.ps1 "<test-channel commands>" (starts
+rqtest, opens Squin's clerk, runs the commands, prints mod errors, quits). One full test\scenario.ps1 after the batch of features.
+Each feature stays in its own plug-in so earlier features keep working.
+STATE 0.7.2 (2026-11-23): 0.7.1 scenario passed every check. Fixes: (1) a tab with nothing at your own rank now shows the nearest lower
+rank that has work (Squin Faction tab at E only had D Dark Reavers); (2) bandit-type factions count as the town owner's enemies on the
+Faction tab when its relation with them is below 0 (they attack on sight whatever the hostility flag says). Test channel: "lairs" lists
+the sites near the open clerk and their lair rank. Tested on nightly 20261123.2 with quick.ps1: loads clean, Squin Faction tab now has
+E Defeat 2 Starving Bandits; lairs near Squin are D/B/A only (no E lair there, as expected). mod-check PASS (600 ticks).
+Not committed yet (since 9acae30).
+STATE 2026-11-23: 0.7.0 scenario passed 19/20 (board local: Crop Louse, Starving Bandits, Moss Crab... near Squin). Fixed after it: a single
+"Defeat 1" allowed when no count >= 2 fits the rank (strong enemies for low ranks), never two identical offers. 0.7.1 adds the CLEAR THE LAIR
+plug-in (src\Quests\LairQuest.cs; Catalog.Lairs = non-town TOWN records with >=3 fighting residents; General: wild nests + outlaw camps,
+Faction: camps of the owner's enemies; target = site index in Quest.Lair, residents = squads with Town == site; done at Group share, needs your
+blow; wiped/changed before you fought = called off). Setting "Clear the lair quests". Not committed yet.
+STATE NOW (end of 2026-11-22): FRAMEWORK REBUILD DONE AS 0.7.0, installed, builds against nightly 20261122.2 (build.ps1 $wantVersion
+updated; C:\KenshiRef\MeitouClient already at d0fa449 = that nightly). NOT COMMITTED. The scenario test has NOT completed on 0.7.0 (two runs
+stopped: Manual Combat was ticked again so Su won't fight on orders -> the script now SKIPS the real-fight step when ManualCombat.mod is in
+mods.cfg; and a PowerShell case clash ($d overwrote $D) broke screenshot paths -> fixed, renamed $atE). FIRST THING NEXT: run
+test\scenario.ps1 (expect some checks to need updating for local boards), then test\check-catalog.ps1, fix, then ask him to commit.
+New structure (0.7.0):
+ - src\World\WorldAccess.cs: the ONE Meitou layer (groups with STANDING counts, tag/release, spawn, people facts, regions, relations,
+   money); each Area switches itself off on first failure.
+ - src\World\Survey.cs: local survey per town (groups within "Quest area" = TargetRange 15000, standing per target, 9x9 region grid).
+ - src\Quests\QuestType.cs: IQuestType plug-in contract (Candidates/Accept/Counts/Track/End), Dice, QuestTypes.All registry.
+ - src\Quests\KillQuests.cs: HuntQuest, DefeatQuest (CountQuest base), GroupQuest (kind "group"; old saves' cull+Group mapped on load).
+ - src\GuildSystem.cs engine; GuildSystem.Boards.cs (local variety, weighted to targets standing near, own-rank guarantee, board lasts
+   RefreshDays, taken offers stay taken, RerollBoard command + "New quests (N rep)" button); GuildSystem.Defeats.cs (exploit fix).
+Implemented from his feedback: local boards (4,5,6,7), count margin 25% (CountMargin), spawn at accept in the town's own regions within
+SpawnLimit 30000, re-marking/refilling while running (max 4 refills, once per game hour; nothing left -> done if progress, else called off,
+no penalty), honest markers (standing only), EXPLOIT FIX (only blows on STANDING victims count, only after AcceptedTick; deaths count only via
+such hits), smaller counts preferred (13), goats: animal unit = (avg+max)/2 (goats now D on his list), rewards: cats +~20%, rep x10, rank
+thresholds x10 (D 500 .. SS 35000), full pay below rank (ReduceBelowRank off), RerollCost 50 x (1 + rank/2).
+Not done from the feedback: location danger (9), no-bar quest givers + dialogue option (10, 11: with own guild clerks), crash cause (3).
+
 NEXT SESSION (agreed 2026-11-22; his limit resets 1:10 PM): THE FRAMEWORK REFACTOR FIRST, no new gameplay.
 0. He installed a new Meitou nightly (0.22.2-nightly.20261122.2). First: update build.ps1 $wantVersion, check out the matching commit in
    C:\KenshiRef\MeitouClient (hash in MeitouClient.dll ProductVersion), rebuild, run test\scenario.ps1 and test\check-catalog.ps1.

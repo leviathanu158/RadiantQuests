@@ -12,7 +12,7 @@ Copy-Item (Join-Path $version.FullName "*.dll") $dll.DirectoryName -Force -Error
 Copy-Item (Join-Path $here "..\bin\Release\net11.0\RadiantQuests.dll") $dll.DirectoryName -Force
 foreach ($which in "base", "full") {
     $out = Join-Path $here "catalog-$which.txt"
-    & dotnet $dll.FullName $launcher.KenshiPath $which (Join-Path $here "..") *> $out
+    & dotnet $dll.FullName $launcher.KenshiPath $which (Join-Path $here "..") 2>&1 | Out-File -Encoding utf8 $out
     Write-Host "== $which ($out)"
     Get-Content $out | Select-String '^== |^  (E|D|C|B|A|S|SS) *:' | ForEach-Object { $_.Line }
 }

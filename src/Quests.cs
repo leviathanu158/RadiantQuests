@@ -28,20 +28,24 @@ public static class Ranks
     /// <summary>The cats a quest of <paramref name="rank"/> pays, from the lowest to the highest of the range.</summary>
     public static (int Min, int Max) Cats(int rank) => rank switch
     {
-        0 => (200, 600),
-        1 => (500, 1500),
-        2 => (1500, 4000),
-        3 => (4000, 10000),
-        4 => (10000, 20000),
-        5 => (20000, 50000),
-        _ => (50000, 120000),
+        0 => (250, 700),
+        1 => (600, 1800),
+        2 => (1800, 4800),
+        3 => (4800, 12000),
+        4 => (12000, 24000),
+        5 => (24000, 60000),
+        _ => (60000, 140000),
     };
 
     /// <summary>The guild rep a quest of <paramref name="rank"/> pays, before the random spread.</summary>
-    public static int Rep(int rank) => rank switch { 0 => 5, 1 => 10, 2 => 20, 3 => 35, 4 => 55, 5 => 80, _ => 120 };
+    public static int Rep(int rank) => rank switch { 0 => 50, 1 => 100, 2 => 200, 3 => 350, 4 => 550, 5 => 800, _ => 1200 };
 
-    /// <summary>The real relation a Faction quest of <paramref name="rank"/> adds when handed in (kept small on purpose).</summary>
-    public static int Relation(int rank) => rank switch { <= 2 => 1, 3 => 2, 4 => 3, 5 => 4, _ => 5 };
+    /// <summary>
+    /// The real relation a Faction quest adds when handed in (his rule, 2026-11-23: no easy way to 100). E and D: none, faction points only.
+    /// C 1-2, B 2-3, A 3-4, S 4-5, SS 5-6: the higher number for a quest in the harder half of its rank (<paramref name="within"/> from
+    /// <see cref="Difficulty.Within"/>). Climbing a faction to rank A at its own rank's quests comes to roughly +50 relations.
+    /// </summary>
+    public static int Relation(int rank, double within) => rank < 2 ? 0 : rank - 1 + (within >= 0.5 ? 1 : 0);
 
     /// <summary>The relation a failed Faction quest of <paramref name="rank"/> costs (none below B).</summary>
     public static int FailRelation(int rank) => rank switch { <= 2 => 0, 3 => -1, 4 => -2, 5 => -3, _ => -4 };
@@ -65,8 +69,26 @@ public sealed class Offer
     public ulong PlatoonKey;
     /// <summary>The target is not hostile to you yet: the quest makes it so (labelled, and pays more).</summary>
     public bool StartsWar;
+    /// <summary>The fight score behind its rank (for the relation a Faction quest gives); not saved.</summary>
+    public double Score;
+    /// <summary>The relation it gives when handed in (Faction tab).</summary>
+    public int Relation;
+    /// <summary>Its targets are brought in from outside the region (a rare out-of-region quest).</summary>
+    public bool Stray;
+    /// <summary>Where its targets are when the board is made (world X, Z), for the area danger; not set for quests that bring theirs in.</summary>
+    public bool HasAt;
+    public float AtX, AtZ;
+    /// <summary>The place is dangerous: the rank was raised for what else lives there.</summary>
+    public bool Dangerous;
 
-    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar);
+    public void SetAt(System.Numerics.Vector2 at)
+    {
+        HasAt = true;
+        AtX = at.X;
+        AtZ = at.Y;
+    }
+
+    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous);
 }
 
 /// <summary>One town's board for one day.</summary>
@@ -75,6 +97,8 @@ public sealed class Board
     public int Site;
     public long Day;
     public string GiverFaction = "";
+    /// <summary>How often the untaken offers were replaced (it changes the seed).</summary>
+    public int Rerolls;
     /// <summary>The General tab's quests.</summary>
     public List<Offer> Offers = [];
     /// <summary>The Faction tab's quests: the giver's enemies now (its wars and the outlaws).</summary>
@@ -106,6 +130,29 @@ public sealed class Quest
     /// <summary>Your side landed a blow on the group (else, if others wipe it out, the quest is called off).</summary>
     public bool Hit;
     public bool StartsWar;
+    /// <summary>The relation with the giver it adds when handed in (Faction quests); -1 for a quest from before 0.7.3 (the rank's low end).</summary>
+    public int Relation = -1;
+    /// <summary>Its targets are brought in from outside the region (spawns use any of their natural kinds).</summary>
+    public bool Stray;
+    /// <summary>Ranked up for a dangerous area.</summary>
+    public bool Dangerous;
+    /// <summary>A camp quest: the last game hour one of the camp's people still standing was within reach of your squad there.</summary>
+    public double LastContact = -1;
+    /// <summary>A camp quest's roster: the camp's people who must fall (lasting ids). Taken when you first come near; grows when more of the
+    /// camp's own people come home.</summary>
+    public List<ulong> Roster = [];
+    public bool Rostered;
+    /// <summary>Groups given up on as out of reach (platoon keys): no longer marked or counted as standing.</summary>
+    public List<ulong> Skipped = [];
+    /// <summary>Since when (game hours) one of yours has been near its targets without reaching any (-1: not now), and the count then.</summary>
+    public double NearSince = -1;
+    public int NearHave;
+    /// <summary>The mod brought targets in for it.</summary>
+    public bool Spawned;
+    /// <summary>The count when it was taken (the share paid is worked out against it).</summary>
+    public int FullNeed;
+    /// <summary>Its targets someone else beat (knocked out or killed with no blow of yours: seen, not guessed), by lasting id.</summary>
+    public List<ulong> LostToOthers = [];
     /// <summary>The people already counted (lasting ids): each counts once, whatever happens to them after.</summary>
     public List<ulong> Defeated = [];
 
@@ -113,22 +160,50 @@ public sealed class Quest
     public string Tag => $"radiantquests:{Id}";
     /// <summary>Where it was taken (the clerk, world X and Z): target groups count within the target range of here.</summary>
     public float AnchorX, AnchorZ;
-    /// <summary>The look for target groups in range (and the spawn when there are none) is done.</summary>
-    public bool Placed;
+    /// <summary>The tick it was taken: only blows after it count.</summary>
+    public long AcceptedTick;
+    /// <summary>How often more targets were spawned while it ran, and when last (game hours).</summary>
+    public int Refills;
+    public double LastRefill;
+    /// <summary>A Clear the lair quest's site (index), -1 for other quests.</summary>
+    public int Lair = -1;
 
     public bool Done => Have >= Need;
 
-    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar);
+    /// <summary>The cats it pays now (its pay share applied, rounded to tens): what the window shows and the hand-in pays.</summary>
+    public long CatsNow => (long)Math.Round(Cats * PayShare / 10) * 10;
 
-    public static string Describe(string kind, int need, string target, bool group = false, int groupSize = 0, bool startsWar = false)
+    /// <summary>The guild rep (and faction points) it gives now, its pay share applied.</summary>
+    public int RepNow => (int)Math.Round(Rep * PayShare);
+
+    /// <summary>
+    /// The share of the reward a finished quest pays (his rule, 2026-11-23): targets lost to a bug, or stuck, are forgiven (full pay); those
+    /// someone else beat are not paid for, so leading a group into the guards earns nothing. 1 when none were.
+    /// </summary>
+    public double PayShare
+    {
+        get
+        {
+            if (FullNeed <= 0) return 1;
+            int lost = Math.Min(LostToOthers.Count(l => !Defeated.Contains(l)), Math.Max(0, FullNeed - Have));
+            return Math.Clamp(1 - (double)lost / FullNeed, 0, 1);
+        }
+    }
+
+    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous);
+
+    public static string Describe(string kind, int need, string target, bool group = false, int groupSize = 0, bool startsWar = false,
+        bool dangerous = false)
     {
         string text = kind switch
         {
-            _ when group => $"Wipe out a group of {groupSize} {target} ({need} needed)",
+            _ when group || kind == GroupQuest.KindId => $"Wipe out a group of {groupSize} {target} ({need} needed)",
+            LairQuest.KindId => $"Clear {target}: defeat everyone at the camp (about {groupSize})",
             Catalog.Hunt => $"Hunt {need} {target}",
             Catalog.Cull => $"Defeat {need} {target}",
             _ => $"{kind} {need} {target}",
         };
+        if (dangerous) text += " (dangerous area)";
         return startsWar ? $"{text} - makes {target} hostile to you" : text;
     }
 
@@ -148,11 +223,29 @@ public sealed class Quest
         h.Add(Deadline);
         h.Add(AnchorX);
         h.Add(AnchorZ);
-        h.Add(Placed);
         h.Add(Group);
         h.Add(GroupSize);
         h.Add(Hit);
         h.Add(StartsWar);
+        h.Add(AcceptedTick);
+        h.Add(Refills);
+        h.Add(LastRefill);
+        h.Add(Lair);
+        h.Add(Relation);
+        h.Add(Stray);
+        h.Add(Dangerous);
+        h.Add(LastContact);
+        h.Add(Rostered);
+        h.Add(NearSince);
+        h.Add(NearHave);
+        h.Add(Spawned);
+        h.Add(FullNeed);
+        h.Add(LostToOthers.Count);
+        foreach (var l in LostToOthers) h.Add(l);
+        h.Add(Skipped.Count);
+        foreach (var k in Skipped) h.Add(k);
+        h.Add(Roster.Count);
+        foreach (var r in Roster) h.Add(r);
         h.Add(Defeated.Count);
         foreach (var d in Defeated) h.Add(d);
     }
@@ -170,6 +263,8 @@ public sealed class GuildState
     public List<Board> Boards = [];
     /// <summary>Lifetime points with each faction (its Faction board's rank); never spent.</summary>
     public Dictionary<string, long> FactionPoints = new(StringComparer.Ordinal);
+    /// <summary>Groups the mod brought in, by platoon key: the game hour of their last defeat (they leave some hours after it).</summary>
+    public Dictionary<ulong, double> SpawnDefeats = [];
 
     public long PointsWith(string faction) => FactionPoints.GetValueOrDefault(faction);
 
@@ -183,6 +278,12 @@ public sealed class GuildState
             h.Add(Rng.StableHash(kv.Key));
             h.Add(kv.Value);
         }
+        h.Add(SpawnDefeats.Count);
+        foreach (var kv in SpawnDefeats.OrderBy(kv => kv.Key))
+        {
+            h.Add(kv.Key);
+            h.Add(kv.Value);
+        }
         h.Add(NextId);
         h.Add(Quests.Count);
         foreach (var q in Quests) q.Hash(ref h);
@@ -192,6 +293,7 @@ public sealed class GuildState
             h.Add(b.Site);
             h.Add(b.Day);
             h.Add(Rng.StableHash(b.GiverFaction));
+            h.Add(b.Rerolls);
             h.Add(b.Offers.Count);
             h.Add(b.FactionOffers.Count);
             foreach (var o in b.Offers.Concat(b.FactionOffers))
@@ -223,6 +325,9 @@ public sealed record OpenBoard(CharacterId Clerk) : GuildCommand;
 
 /// <summary>Take offer <paramref name="Slot"/> of the board of <paramref name="Site"/>.</summary>
 public sealed record AcceptOffer(CharacterId Clerk, int Site, int Slot, bool Faction = false) : GuildCommand;
+
+/// <summary>Replace the untaken offers of the board at <paramref name="Clerk"/> (costs a little rep).</summary>
+public sealed record RerollBoard(CharacterId Clerk) : GuildCommand;
 
 /// <summary>Hand in a finished quest at <paramref name="Clerk"/>.</summary>
 public sealed record HandIn(CharacterId Clerk, int QuestId) : GuildCommand;

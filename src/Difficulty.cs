@@ -21,4 +21,15 @@ public static class Difficulty
         while (rank < Lines.Length && score >= Lines[rank]) rank++;
         return rank;
     }
+
+    /// <summary>How far into its rank's band <paramref name="score"/> sits, 0 (just made the rank) to 1 (nearly the next); log scale.</summary>
+    public static double Within(double score)
+    {
+        int rank = RankOf(score);
+        double lo = rank == 0 ? Lines[0] / 8 : Lines[rank - 1];
+        double hi = rank < Lines.Length ? Lines[rank] : Lines[^1] * 4;
+        if (score <= lo) return 0;
+        if (score >= hi) return 1;
+        return Math.Log(score / lo) / Math.Log(hi / lo);
+    }
 }

@@ -104,6 +104,10 @@ internal static class TestChannel
                 if (view is null) return "no view yet";
                 return string.Join(" | ", view.Factions.Select(kv => string.Create(CultureInfo.InvariantCulture,
                     $"{RadiantQuestsMod.Catalog.FactionNames.GetValueOrDefault(kv.Key, kv.Key)}: rank {Ranks.Name(kv.Value.Rank)} {kv.Value.Points} pts relation {kv.Value.Relation:0.##}")));
+            case "reroll":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new RerollBoard(clerks[s_openIndex].Id) { Tick = tick });
+                return "sent";
             case "handin":
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
                 Send(new HandIn(clerks[s_openIndex].Id, Arg(1)) { Tick = tick });
@@ -159,6 +163,19 @@ internal static class TestChannel
                             if (!l.TargetStringId.Contains(' ') && data2.Find(l.TargetStringId) is { Type: Meitou.Data.Fcs.FcsRecordType.Character, } c && !c.GetBool("unique"))
                                 return target.Contains(' ') ? "none" : $"{l.TargetStringId} --faction {target}";
                 return "none";
+            case "lairs":
+                // The lairs near the open clerk's town and what the catalog knows of each (a lair is offered only at its rank, when allowed).
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                var ck = clerks[s_openIndex];
+                var data3 = RadiantQuestsMod.Context?.Population;
+                if (data3 is null) return "no population";
+                var at3 = new System.Numerics.Vector2(ck.Position.X, ck.Position.Z);
+                var near3 = data3.Sites.Select(s => (s, d: System.Numerics.Vector2.Distance(new System.Numerics.Vector2(s.Position.X, s.Position.Z), at3)))
+                    .Where(x => x.d <= RadiantQuestsMod.Settings.SpawnLimit).OrderBy(x => x.d).Take(25)
+                    .Select(x => RadiantQuestsMod.Catalog.Lairs.TryGetValue(x.s.Town.Id, out var lr)
+                        ? $"{x.s.Town.Name} ({x.d:0}): lair, {lr.Residents} x {lr.Unit:0.0}, owner {lr.Owner ?? "wild"}, rank {Ranks.Name(LairQuest.Rank(lr))}"
+                        : $"{x.s.Town.Name} ({x.d:0}): {x.s.Town.Type}, not a lair");
+                return string.Join(" | ", near3);
             case "checks":
                 File.WriteAllLines(Path.Combine(s_dir!, "rq.checks"), RadiantQuestsMod.Catalog.Checks);
                 return $"{RadiantQuestsMod.Catalog.Checks.Count} notes written to rq.checks";
@@ -181,7 +198,7 @@ internal static class TestChannel
                     r.Append("; board: " + string.Join(" | ", b.Offers.Select(o =>
                         $"[{o.Slot}] {Ranks.Name(o.Rank)} {o.Text} {o.Cats}c {o.Rep}r{(o.Taken ? " taken" : "")}{(o.Locked ? " locked" : "")}"))
                         + "; faction board: " + string.Join(" | ", b.FactionOffers.Select(o =>
-                        $"[{o.Slot}] {Ranks.Name(o.Rank)} {o.Text} {o.Cats}c {o.Rep}r{(o.Taken ? " taken" : "")}{(o.Locked ? " locked" : "")}")));
+                        $"[{o.Slot}] {Ranks.Name(o.Rank)} {o.Text} {o.Cats}c {o.Rep}r{(o.Relation > 0 ? $" +{o.Relation}rel" : "")}{(o.Taken ? " taken" : "")}{(o.Locked ? " locked" : "")}")));
                 return r.ToString();
             default:
                 return "unknown command";

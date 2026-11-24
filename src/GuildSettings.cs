@@ -23,6 +23,11 @@ public sealed class GuildSettings
             + "the set share of it has been defeated (knocked out, killed or captured) and your side has fought it.")]
     public bool GroupQuests { get; set; } = true;
 
+    [Setting("Clear the lair quests", SubGroup = "Features",
+        Hint = "Quests to clear an existing camp, nest or outpost near the town (never one the mod makes): done when the set share of the people "
+            + "or animals living there is defeated, and your side fought them.")]
+    public bool LairQuests { get; set; } = true;
+
     [Setting("Spawn targets when none are near", SubGroup = "Features",
         Hint = "When you take a hunt or kill quest and no group of the target is within the target range, one ordinary group of them is spawned "
             + "in that range (never a unique character). Off: the quest uses only groups already in the world.")]
@@ -33,22 +38,22 @@ public sealed class GuildSettings
 
     [Setting("Rep for rank D", Min = 5, Max = 2000, Step = 5, SubGroup = "Ranks",
         Hint = "Lifetime rep needed for rank D (you start at E). Spending rep at the store never lowers your rank.")]
-    public int RankD { get; set; } = 50;
+    public int RankD { get; set; } = 500;
 
     [Setting("Rep for rank C", Min = 10, Max = 5000, Step = 10, SubGroup = "Ranks")]
-    public int RankC { get; set; } = 150;
+    public int RankC { get; set; } = 1500;
 
     [Setting("Rep for rank B", Min = 20, Max = 10000, Step = 10, SubGroup = "Ranks")]
-    public int RankB { get; set; } = 400;
+    public int RankB { get; set; } = 4000;
 
     [Setting("Rep for rank A", Min = 30, Max = 20000, Step = 10, SubGroup = "Ranks")]
-    public int RankA { get; set; } = 900;
+    public int RankA { get; set; } = 9000;
 
     [Setting("Rep for rank S", Min = 40, Max = 50000, Step = 10, SubGroup = "Ranks")]
-    public int RankS { get; set; } = 1800;
+    public int RankS { get; set; } = 18000;
 
     [Setting("Rep for rank SS", Min = 50, Max = 100000, Step = 50, SubGroup = "Ranks")]
-    public int RankSS { get; set; } = 3500;
+    public int RankSS { get; set; } = 35000;
 
     [Setting("Cats reward", Min = 0.1, Max = 5, Step = 0.05, SubGroup = "Rewards", Hint = "Multiplies the cats every quest pays.")]
     public double CatsMult { get; set; } = 1;
@@ -70,15 +75,55 @@ public sealed class GuildSettings
     [Setting("Abandon cost (share of the quest's rep)", Min = 0, Max = 2, Step = 0.05, SubGroup = "Penalties")]
     public double AbandonCost { get; set; } = 0.25;
 
-    [Setting("Target range", Min = 5000, Max = 100000, Step = 1000, SubGroup = "Targets",
-        Hint = "How far from the town a hunt or kill quest looks for its target groups (world units; about 10 per metre). They are marked on "
-            + "the map. With none in range when you take the quest, one ordinary group of them is spawned somewhere in that range.")]
-    public int TargetRange { get; set; } = 30000;
+    [Setting("Quest area", Min = 5000, Max = 60000, Step = 1000, SubGroup = "Targets",
+        Hint = "How far around a town its quests reach (world units; about 10 per metre): a town only offers work against what lives within "
+            + "this distance or naturally spawns in its surrounding regions, and that's where its targets are marked and spawned.")]
+    public int TargetRange { get; set; } = 15000;
+
+    [Setting("Count margin", Min = 0, Max = 0.6, Step = 0.05, SubGroup = "Targets",
+        Hint = "A quest never asks for every last one around: with 12 standing near the town and a margin of 0.25, it asks for at most 9.")]
+    public double CountMargin { get; set; } = 0.25;
+
+    [Setting("Board refresh (days)", Min = 1, Max = 7, Step = 1, SubGroup = "Boards",
+        Hint = "How long a town's board lasts. Taken quests stay taken: once a rank is cleared, nothing new comes until the board refreshes.")]
+    public int RefreshDays { get; set; } = 1;
+
+    [Setting("New quests cost (rep)", Min = 0, Max = 2000, Step = 10, SubGroup = "Boards",
+        Hint = "What the clerk charges to replace the quests not taken yet (a little more at higher ranks). Paid from rep you can spend.")]
+    public int RerollCost { get; set; } = 50;
+
+    [Setting("Most quests per rank", Min = 1, Max = 12, Step = 1, SubGroup = "Boards",
+        Hint = "Targets really around a town come first, each once per rank, filling a rank up to 5 to this many quests. Then sometimes one new kind of enemy is brought in.")]
+    public int MostPerRank { get; set; } = 7;
+
+    [Setting("Out-of-region quests", Min = 0, Max = 1, Step = 0.05, SubGroup = "Boards",
+        Hint = "The chance that a quest bringing in new enemies picks ones that don't live in the region (a rare sight). 0: only local kinds.")]
+    public double StrayChance { get; set; } = 0.15;
+
+    [Setting("Area danger share", Min = 0, Max = 1, Step = 0.05, SubGroup = "Boards",
+        Hint = "How much of the strength of other things hostile to you close to a quest's place (groups and camps) adds to its difficulty. A quest rises at most one rank. 0: off.")]
+    public double DangerShare { get; set; } = 0.25;
+
+    [Setting("Camp stragglers (hours)", Min = 0.5, Max = 24, Step = 0.5, SubGroup = "Boards",
+        Hint = "Clearing a camp: once most are defeated, if none left come within reach of your squad at the camp for this many game hours, it counts as cleared.")]
+    public double StragglerHours { get; set; } = 2;
+
+    [Setting("Out of reach after (hours)", Min = 0.25, Max = 12, Step = 0.25, SubGroup = "Boards",
+        Hint = "Targets you stay near for this long without ever reaching them (in water, up a cliff, stuck) are given up: others are found or brought in, or the quest ends with no penalty.")]
+    public double StuckHours { get; set; } = 1;
+
+    [Setting("Defeated spawns leave after (hours)", Min = 0.5, Max = 24, Step = 0.5, SubGroup = "Boards",
+        Hint = "Groups a quest brought in are removed this long after their last defeat, once none of your characters is near (never in front of you).")]
+    public double DefeatedHours { get; set; } = 3.5;
+
+    [Setting("Pay less below your rank", SubGroup = "Rewards",
+        Hint = "Off: every quest pays in full whatever your rank. On: quests below your rank pay less (and no rep from three ranks down).")]
+    public bool ReduceBelowRank { get; set; }
 
     [Setting("Furthest spawn", Min = 10000, Max = 200000, Step = 5000, SubGroup = "Targets",
         Hint = "How far from the town a quest may spawn its targets (world units; about 10 per metre). Groups only spawn in regions where they "
             + "normally live, which may be further than the target range, but never further than this.")]
-    public int SpawnLimit { get; set; } = 60000;
+    public int SpawnLimit { get; set; } = 30000;
 
     [Setting("Group share to defeat", Min = 0.5, Max = 1, Step = 0.05, SubGroup = "Targets",
         Hint = "How much of a group must be defeated for a group quest: 0.75 means 12 of 15. Below 1, a member you can't find never blocks it.")]
@@ -96,13 +141,15 @@ public sealed class GuildSettings
 
     /// <summary>The settings the world reads, copied in a serial step (one value per tick on every machine).</summary>
     public SettingsCopy Copy() => new(RankD, RankC, RankB, RankA, RankS, RankSS, CatsMult, RepMult, KillHours, KillRefreshHours, FailCost, AbandonCost, TargetRange, Hunts, Culls, SpawnTargets, FactionQuests,
-        GroupQuests, GroupShare, WarBonus, SpawnLimit);
+        GroupQuests, GroupShare, WarBonus, SpawnLimit, CountMargin, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours);
 }
 
 /// <summary>The settings as the world saw them this tick.</summary>
 public sealed record SettingsCopy(int RankD, int RankC, int RankB, int RankA, int RankS, int RankSS, double CatsMult, double RepMult, int KillHours,
     int KillRefreshHours, double FailCost, double AbandonCost, int TargetRange, bool Hunts, bool Culls,
-    bool SpawnTargets, bool FactionQuests, bool GroupQuests, double GroupShare, double WarBonus, int SpawnLimit)
+    bool SpawnTargets, bool FactionQuests, bool GroupQuests, double GroupShare, double WarBonus, int SpawnLimit, double CountMargin,
+    int RefreshDays, int RerollCost, bool ReduceBelowRank, bool LairQuests, int MostPerRank = 7, double StrayChance = 0.15,
+    double StragglerHours = 2, double DangerShare = 0.25, double StuckHours = 1, double DefeatedHours = 3.5)
 {
     public static SettingsCopy Defaults { get; } = new GuildSettings().Copy();
 

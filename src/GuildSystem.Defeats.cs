@@ -1,15 +1,11 @@
 // Radiant Quests for Meitou. GPLv3 or later.
-// Defeats and group quests.
-//
-// In Kenshi most fights end with people knocked out, not dead, so quests count *defeats*: someone your side hit (in the last two minutes) who is
-// knocked out, dead, carried off by one of yours or locked up. Each person counts once per quest (by their lasting id), whatever happens to them
-// after. A "wipe out this group" quest follows one real group (its platoon, tagged when the quest is taken) and is done when the set share of it
-// (0.75 by default) is defeated, so a member who can't be found never blocks it. If others wipe the group out before your side lands a blow, the
-// quest is called off with no penalty; once you have fought it, the group's end finishes the quest.
-using System.Numerics;
+// Defeats. Most Kenshi fights end with people knocked out, not dead, so quests count DEFEATS: someone your side hit while they were STANDING
+// (a blow on someone already down doesn't count, so finishing off the downed, or butchering them, never does) in the last two minutes, and
+// who is now knocked out, dead, carried off by one of yours or locked up. Each person counts once per quest, and only for quests taken
+// before that blow, so a group left knocked out by an earlier quest can't be farmed for the next one.
 using Meitou.Simulation;
+using Meitou.Simulation.Bodies;
 using Meitou.Simulation.Combat;
-using Meitou.Simulation.Factions;
 
 namespace RadiantQuests;
 
@@ -18,105 +14,131 @@ public sealed partial class GuildSystem : ICombatHitObserver
     /// <summary>How long after your side's last blow a knockout or death still counts as your defeat (ticks; two minutes at 30 a second).</summary>
     const long DefeatWindow = 3600;
 
-    /// <summary>The characters your side hit, with the tick of the last blow (hashed: it decides what counts).</summary>
+    /// <summary>The characters your side hit while they were standing, with the tick of the last such blow (hashed: it decides what counts).</summary>
     readonly Dictionary<CharacterId, long> _hits = [];
 
     long _lastDefeats;
 
-    /// <summary>The defeat and group feature failed once this session (a Meitou change): off until the game restarts.</summary>
-    static bool s_defeatsBroken;
-
     /// <summary>A test kill's made-up person (never a real lasting id).</summary>
     ulong _testPerson = ulong.MaxValue;
 
-    #region Blows and defeats
-
     public void HitResolved(World world, in CombatHit hit)
     {
-        if (s_defeatsBroken || _s.Quests.Count == 0 || !IsYours(world, hit.Attacker)) return;
-        try
+        if (_s.Quests.Count == 0 || WorldAccess.IsOff(WorldAccess.Area.People)) return;
+        // Only a blow on someone standing: hitting the downed never earns a defeat.
+        if (!Access.IsYours(world, hit.Attacker)) return;
+        if (!hit.VictimWasAlive || hit.VictimWasIncapacitated)
         {
-            _hits[hit.Victim] = world.Tick;
-            // A lasting id now, while the victim is in the world, so the defeat can be counted once even after a load.
-            world.LastingIds.GetOrGive(hit.Victim);
-            if (TagOf(world, hit.Victim) is { } tag)
-                foreach (var q in _s.Quests)
-                    if (q.Group && !q.Hit && q.Tag == tag)
-                    {
-                        q.Hit = true;
-                        _dirty = true;
-                    }
+            RadiantQuestsMod.Detail($"blow on {hit.Victim} not counted: {(hit.VictimWasAlive ? "already down" : "dead")}");
+            return;
         }
-        catch (Exception e)
-        {
-            DefeatsOff(e);
-        }
+        _hits[hit.Victim] = world.Tick;
+        Access.Remember(world, hit.Victim);
+        if (Access.Person(world, hit.Victim) is { } victim)
+            foreach (var q in _s.Quests)
+                if (!q.Hit && ((q.Kind == GroupQuest.KindId && q.Tag == victim.GroupTag) || (q.Kind == LairQuest.KindId && q.Lair == victim.HomeSite)))
+                {
+                    q.Hit = true;
+                    _dirty = true;
+                }
     }
 
-    bool IsYours(World world, CharacterId c) =>
-        world.Characters.TryResolveNext(c, out int s) && world.Characters.Cold(s) is { } cold
-        && (cold.IsPlayer || (_data.PlayerFaction >= 0 && cold.Faction == _data.PlayerFaction));
-
-    /// <summary>The quest tag of the group <paramref name="c"/> belongs to, if any.</summary>
-    string? TagOf(World world, CharacterId c)
-    {
-        if (!world.Characters.TryResolveNext(c, out int s) || world.Characters.Cold(s) is not { SquadId: >= 0 } cold) return null;
-        if (world.Squads.Find(cold.SquadId) is not { PlatoonId: >= 0 } squad || world.Platoons.Find(squad.PlatoonId) is not { } platoon) return null;
-        return platoon.ModTag.StartsWith("radiantquests:", StringComparison.Ordinal) ? platoon.ModTag : null;
-    }
-
-    /// <summary>Every second: those your side hit lately who are now down, dead, carried off by yours or locked up are defeated.</summary>
+    /// <summary>Every second: those your side hit lately (standing) who are now down, dead, carried off by yours or locked up are defeated.</summary>
     void CheckDefeats(World world)
     {
         _lastDefeats = world.Tick;
         if (_hits.Count == 0) return;
-        var table = world.Characters;
         foreach (var (c, tick) in _hits.OrderBy(kv => kv.Key.Slot).ThenBy(kv => kv.Key.Generation).ToList())
         {
-            if (world.Tick - tick > DefeatWindow || !table.TryResolveNext(c, out int s) || table.Cold(s) is not { } cold)
+            if (world.Tick - tick > DefeatWindow || Access.Person(world, c) is not { } p)
             {
                 _hits.Remove(c);
                 continue;
             }
-            bool down = cold.Medical is { Incapacitated: true } || !table.Next[s].Alive;
-            bool taken = cold.IsImprisoned || (cold.CarriedBy != CharacterId.None && IsYours(world, cold.CarriedBy));
-            if (down || taken) Defeat(world, c, cold);
+            if (p.Down || p.Taken) Defeat(world, p, tick);
         }
     }
 
-    /// <summary><paramref name="c"/> is defeated by your side: counts for every quest it matches, once per quest.</summary>
-    void Defeat(World world, CharacterId c, CharacterCold cold)
+    public void Died(World world, in CharacterDeath death)
     {
-        ulong person = cold.LastingId.Value;
-        if (person == 0) return;
-        string faction = _data.FactionId(cold.Faction) ?? "";
-        string race = Cat.RaceOf.GetValueOrDefault(cold.RecordId, "");
+        if (death.Faction == _data.PlayerFaction) return;
+        if (_s.Quests.Count == 0) return;
+        // A death counts only for someone your side hit while standing (a kill of the downed, or butchering, does not).
+        if (!_hits.TryGetValue(death.Victim, out long tick) || world.Tick - tick > DefeatWindow)
+        {
+            if (Access.Person(world, death.Victim) is { } other) LostToOthers(world, other);
+            return;
+        }
+        if (Access.Person(world, death.Victim) is { } p) Defeat(world, p, tick);
+    }
+
+    /// <summary><paramref name="p"/> is defeated by your side (last standing blow at <paramref name="hitTick"/>): counts once per quest it matches.</summary>
+    void Defeat(World world, PersonFacts p, long hitTick)
+    {
+        if (p.Lasting == 0) return;
+        if (p.GroupKey != 0) _s.SpawnDefeats[p.GroupKey] = world.GameHours;
+        string faction = _data.FactionId(p.Faction) ?? "";
+        string race = Cat.RaceOf.GetValueOrDefault(p.Record, "");
         // Someone's animal (a guild faction's pack beast or a town's herd) is no hunt kill, whatever its race.
-        if (Array.BinarySearch(_guildFactions, cold.Faction) >= 0) race = "";
-        Count(world, faction, race, person, TagOf(world, c));
+        if (Array.BinarySearch(_guildFactions, p.Faction) >= 0) race = "";
+        Count(world, p, race, Cat.Head(faction), p.Lasting, hitTick);
     }
 
     /// <summary>
-    /// A defeat of <paramref name="person"/> (of <paramref name="faction"/> and <paramref name="race"/>, in the group tagged <paramref name="tag"/>):
-    /// counted for each quest it matches that has not counted them yet.
+    /// Someone of a running quest's targets went down or died with no blow of yours: marked lost to others on each quest they would count for
+    /// (only ones near the quest's place or in its own groups, and not already counted for it). Evidence only: what is not seen is a bug.
     /// </summary>
-    void Count(World world, string faction, string race, ulong person, string? tag)
+    public void LostToOthers(World world, PersonFacts p)
+    {
+        if (_hits.TryGetValue(p.Id, out long tick) && world.Tick - tick <= DefeatWindow) return;   // yours: counted as a defeat
+        string faction = _data.FactionId(p.Faction) ?? "";
+        string race = Array.BinarySearch(_guildFactions, p.Faction) >= 0 ? "" : Cat.RaceOf.GetValueOrDefault(p.Record, "");
+        foreach (var q in _s.Quests)
+        {
+            if (q.Done || q.Kind is not (Catalog.Hunt or Catalog.Cull) || QuestTypes.Of(q.Kind) is not { } type) continue;
+            if (!type.Counts(q, p, race, Cat.Head(faction))) continue;
+            ulong id = p.Lasting != 0 ? p.Lasting : Access.LastingOf(world, p.Id);
+            if (id == 0 || q.Defeated.Contains(id) || q.LostToOthers.Contains(id)) continue;
+            if (p.GroupTag != q.Tag && !Access.Within(world, p.Id, new System.Numerics.Vector2(q.AnchorX, q.AnchorZ), _set.TargetRange)) continue;
+            q.LostToOthers.Add(id);
+            _dirty = true;
+            RadiantQuestsMod.Detail($"quest #{q.Id}: {p.Record} beaten by someone else");
+        }
+    }
+
+    /// <summary>
+    /// Whether your side struck one of <paramref name="q"/>'s targets in the last <paramref name="ticks"/> (that fight is going on: its count may
+    /// still change). Blows on anyone else (a passing group you fight) don't hold the quest up.
+    /// </summary>
+    public bool Fighting(World world, Quest q, long ticks = 300)
+    {
+        if (QuestTypes.Of(q.Kind) is not { } type) return false;
+        foreach (var (c, tick) in _hits)
+        {
+            if (world.Tick - tick > ticks || Access.Person(world, c) is not { } p) continue;
+            string race = Array.BinarySearch(_guildFactions, p.Faction) >= 0 ? "" : Cat.RaceOf.GetValueOrDefault(p.Record, "");
+            if (type.Counts(q, p, race, Cat.Head(_data.FactionId(p.Faction) ?? ""))) return true;
+        }
+        return false;
+    }
+
+    void Count(World world, PersonFacts p, string race, string head, ulong person, long hitTick)
     {
         foreach (var q in _s.Quests)
         {
-            if (q.Done || q.Defeated.Contains(person)) continue;
-            bool match = q.Group
-                ? tag == q.Tag
-                : q.Kind switch
-                {
-                    Catalog.Cull => q.TargetId == Cat.Head(faction),
-                    Catalog.Hunt => q.TargetId == race,
-                    _ => false,
-                };
-            if (!match) continue;
+            if (q.Done || q.Defeated.Contains(person) || hitTick < q.AcceptedTick) continue;
+            if (QuestTypes.Of(q.Kind) is not { } type || !type.Counts(q, p, race, head)) continue;
             q.Defeated.Add(person);
             q.Have++;
-            if (q.Group) q.Hit = true;
+            if (q.Kind == LairQuest.KindId && !q.Rostered) q.Have = 0;   // counted once the roster is taken
+            if (q.Kind is GroupQuest.KindId or LairQuest.KindId) q.Hit = true;
+            // A camp is cleared by who is left, not by a count (the data's count is only about right): checked after every defeat.
+            if (q.Kind == LairQuest.KindId)
+            {
+                bool cleared = LairQuest.Check(world, this, q);
+                if (cleared) q.Have = q.Need;
+                else if (q.Have >= q.Need) q.Have = q.Need - 1;   // the roster decides, not the data's count
+            }
             q.Deadline = Math.Min(q.Deadline + _set.KillRefreshHours, world.GameHours + _set.KillHours);
             _dirty = true;
             RadiantQuestsMod.Toast(q.Done ? $"{q.Describe()}: done! Hand it in at a guild clerk." : $"{q.Describe()}: {q.Have}/{q.Need}");
@@ -124,17 +146,30 @@ public sealed partial class GuildSystem : ICombatHitObserver
     }
 
     /// <summary>A test kill: counts as a defeat of a made-up person of <paramref name="target"/> (a faction or race id).</summary>
-    void TestCount(World world, string target) => Count(world, target, target, _testPerson--, null);
+    void TestCount(World world, string target) =>
+        Count(world, new PersonFacts(CharacterId.None, _testPerson, -1, "", true, false, null), target, target, _testPerson--, world.Tick);
 
-    void DefeatsOff(Exception e)
+    void TestFinishQuest(World world, int id)
     {
-        if (s_defeatsBroken) return;
-        s_defeatsBroken = true;
-        RadiantQuestsMod.Log($"defeat counting turned OFF (this Meitou changed what it uses): {e.GetType().Name}: {e.Message}");
+        if (_s.Quests.FirstOrDefault(x => x.Id == id) is not { } q) return;
+        if (q.Kind is GroupQuest.KindId or LairQuest.KindId)
+        {
+            q.Hit = true;
+            q.Have = q.Need;
+            _dirty = true;
+            return;
+        }
+        for (int i = 0; i < 100 && !q.Done; i++) TestCount(world, q.TargetId);
     }
 
     void HashDefeats(ref StateHasher h)
     {
+        h.Add(_siteSeen.Count);
+        foreach (var (site, tick) in _siteSeen)
+        {
+            h.Add(site);
+            h.Add(tick);
+        }
         h.Add(_hits.Count);
         foreach (var (c, tick) in _hits.OrderBy(kv => kv.Key.Slot).ThenBy(kv => kv.Key.Generation))
         {
@@ -142,86 +177,4 @@ public sealed partial class GuildSystem : ICombatHitObserver
             h.Add(tick);
         }
     }
-
-    #endregion
-
-    #region Group quests
-
-    /// <summary>
-    /// Up to three "wipe out this group" offers from the real groups near the town: target factions as <paramref name="allowed"/> says, ranked by
-    /// their real strength (size times the faction's fighter strength) against the load order's typical squads. A group already on another
-    /// quest, or one another mod spawned or tagged, is left alone.
-    /// </summary>
-    void AddGroupOffers(World world, List<Offer> offers, ref Roll rng, Vector2 at, int myRank, Func<Target, bool> allowed, IReadOnlyList<Target> targets)
-    {
-        if (!_set.GroupQuests || s_defeatsBroken) return;
-        var byId = targets.ToDictionary(t => t.Id, StringComparer.Ordinal);
-        var taken = new HashSet<ulong>(offers.Where(o => o.Group).Select(o => o.PlatoonKey));
-        var candidates = new List<(Meitou.Simulation.Factions.Platoon P, Target T, int Rank)>();
-        foreach (var p in world.Platoons.All)
-        {
-            if (p.Dead || p.ModSpawned || p.ModTag.Length > 0 || p.Faction < 0 || p.Size < 3 || taken.Contains(p.Key)) continue;
-            if (_data.FactionId(p.Faction) is not { } f || !byId.TryGetValue(Cat.Head(f), out var t) || !allowed(t)) continue;
-            if (Vector2.Distance(PlatoonPosition(world, p), at) > _set.TargetRange) continue;
-            int rank = Cat.GroupRank(Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit), p.Size);
-            // Your rank and one above; higher ones rarely, as on the other boards.
-            if (rank > myRank + 1 && !rng.Chance(0.15)) continue;
-            candidates.Add((p, t, rank));
-        }
-        // Three at random from the nearest dozen (a seeded shuffle, so every machine picks the same).
-        var pool = candidates.OrderBy(c => Vector2.Distance(PlatoonPosition(world, c.P), at)).ThenBy(c => c.P.Id).Take(12).ToList();
-        for (int i = pool.Count - 1; i > 0; i--)
-        {
-            int j = rng.Int(0, i);
-            (pool[i], pool[j]) = (pool[j], pool[i]);
-        }
-        foreach (var (p, t, rank) in pool.Take(3))
-        {
-            var (cMin, cMax) = Ranks.Cats(rank);
-            offers.Add(new Offer
-            {
-                Slot = offers.Count,
-                Kind = Catalog.Cull,
-                TargetId = t.Id,
-                TargetName = t.Name,
-                Rank = rank,
-                Group = true,
-                GroupSize = p.Size,
-                PlatoonKey = p.Key,
-                Need = Math.Max(1, (int)Math.Ceiling(p.Size * _set.GroupShare)),
-                Cats = (long)Math.Round((cMin + rng.Double() * (cMax - cMin)) / 10) * 10,
-                Rep = (int)Math.Round(Ranks.Rep(rank) * (0.85 + 0.3 * rng.Double())),
-            });
-        }
-    }
-
-    /// <summary>Takes a group offer: tags its platoon for the quest. False when the group is gone since the board was made.</summary>
-    bool TagGroup(World world, Offer offer, Quest q)
-    {
-        var p = world.Platoons.All.FirstOrDefault(x => x.Key == offer.PlatoonKey && !x.Dead && x.ModTag.Length == 0);
-        if (p is null) return false;
-        p.ModTag = q.Tag;
-        return true;
-    }
-
-    /// <summary>
-    /// A group quest's group is gone (dead, despawned): finished if your side fought it, else called off with no penalty. True when the quest
-    /// ended.
-    /// </summary>
-    bool GroupGone(World world, Quest q)
-    {
-        if (q.Done) return false;
-        _dirty = true;
-        if (q.Hit)
-        {
-            q.Have = q.Need;
-            RadiantQuestsMod.Toast($"{q.Describe()}: the group is broken. Hand it in at a guild clerk.");
-            return false;
-        }
-        _s.Quests.Remove(q);
-        RadiantQuestsMod.Toast($"The group for \"{q.Describe()}\" is gone before you fought it: the quest is called off, no penalty.");
-        return true;
-    }
-
-    #endregion
 }

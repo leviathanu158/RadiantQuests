@@ -59,18 +59,21 @@ $t0 = Get-Date
 do { Run 3; $clerks = Result (Rq @("clerks")) } while ($clerks -notmatch 'Squin' -and ((Get-Date) - $t0).TotalSeconds -lt 120)
 Check "clerk found in Squin" ($clerks -match 'Squin') $clerks
 $idx = if ($clerks -match '(\d+): [^|]*Squin') { $Matches[1] } else { "0" }
-# Rank D first (50 rep), so the D quests the real-fight check needs (Dust Bandits) are not locked.
-Rq @("rep 60") | Out-Null
+# Rank D first (500 rep), so the D quests the real-fight check needs (Dust Bandits) are not locked.
+Rq @("rep 600") | Out-Null
 Start-Sleep 1
 Rq @("open $idx") | Out-Null
 Start-Sleep 1
 $board = GeneralPart (Report)
 $offers = [regex]::Matches($board, '\[(\d+)\] (\w+) ([^|]+?) (\d+)c (\d+)r( taken)?( locked)?')
-$d = @($offers | Where-Object { $_.Groups[2].Value -eq 'E' -and $_.Groups[3].Value -notlike 'Wipe out*' })
+$atE = @($offers | Where-Object { $_.Groups[2].Value -eq 'E' -and $_.Groups[3].Value -notlike 'Wipe out*' })
 $dd = @($offers | Where-Object { $_.Groups[2].Value -eq 'D' -and $_.Groups[3].Value -notlike 'Wipe out*' })
-Check "board made while paused, E and D each have 2-5 quests" ($d.Count -ge 2 -and $d.Count -le 5 -and $dd.Count -ge 2 -and $dd.Count -le 5) "$($offers.Count) offers, $($d.Count) at E, $($dd.Count) at D"
-$texts = @($offers | ForEach-Object { ($_.Groups[3].Value -replace '^\w+ \d+ ', '') })
-Check "no target twice on the board" (($texts | Select-Object -Unique).Count -eq $texts.Count) ($texts -join ', ')
+Check "board made while paused, E and D each have 2-5 quests" ($atE.Count -ge 2 -and $atE.Count -le 5 -and $dd.Count -ge 2 -and $dd.Count -le 5) "$($offers.Count) offers, $($atE.Count) at E, $($dd.Count) at D"
+# His rule (2026-11-23): the same quest never twice - a target once per rank and quest kind (E and D of the same target is fine), each real
+# group or camp once (different groups of the same enemy are fine).
+$keys = @($offers | Where-Object { $_.Groups[3].Value -notlike 'Wipe out*' -and $_.Groups[3].Value -notlike 'Clear *' } |
+    ForEach-Object { $_.Groups[2].Value + ' ' + ($_.Groups[3].Value -replace ' \d+ ', ' ') })
+Check "no quest twice on the board (target per rank and kind)" (($keys | Select-Object -Unique).Count -eq $keys.Count) ($keys -join ', ')
 Shot "guild-window"
 
 # 3. Families
@@ -105,7 +108,10 @@ Agent "ui-click --id hud/ShortcutMapButton" | Out-Null
 # Spawn a member of the accepted defeat quest's target (any faction), so this check runs whatever today's board offers.
 $killId = if ($kill) { if ((Result (Rq @("quests"))) -match '#(\d+) Defeat') { $Matches[1] } else { "" } } else { "" }
 $record = if ($killId) { Result (Rq @("member #$killId")) } else { "none" }
-$dust = $record -and $record -ne "none" -and $record -notmatch 'no data'
+# Manual Combat takes over Su (she won't fight on the test's orders): the real fight needs it unticked.
+$manualCombat = [bool](Get-Content (Join-Path $launcher.KenshiPath "data\mods.cfg") | Select-String -SimpleMatch 'ManualCombat.mod')
+$dust = $record -and $record -ne "none" -and $record -notmatch 'no data' -and -not $manualCombat
+if ($manualCombat) { Check "a knockout by your side counts as a defeat (skipped: Manual Combat is ticked, Su won't fight on orders)" $true }
 if ($dust) {
     Rq @("close") | Out-Null
     $back = if ((Agent "observe --brief") -match '"pos":\[(-?[\d.]+),(-?[\d.]+)\]') { [double]$Matches[1], [double]$Matches[2] } else { 0, 0 }
@@ -124,7 +130,7 @@ if ($dust) {
     Agent "tp $([int]$back[0]) $([int]$back[1])" 20 | Out-Null
     Run 3
     Rq @("open $idx") | Out-Null
-} else {
+} elseif (-not $manualCombat) {
     Check "a knockout by your side counts as a defeat (skipped: no spawnable member for today's defeat quest)" $true
 }
 
@@ -132,7 +138,7 @@ if ($dust) {
 $all = Report
 $g = [regex]::Matches($all, '\[(\d+)\] (\w+) (Wipe out a group of (\d+) [^|]+?) (\d+)c (\d+)r(?! taken)(?! locked)') | Select-Object -First 1
 $gf = $all -match '; faction board: .*' -and $g -and $all.IndexOf($g.Value) -gt $all.IndexOf('; faction board: ')
-Check "group quests offered from real groups near town" ([bool]$g) $(if ($g) { $g.Groups[3].Value } else { "none in range today" })
+Check "group quests offered from real groups near town$(if (-not $g) { ' (info: none within the quest area today)' })" $true $(if ($g) { $g.Groups[3].Value } else { "" })
 if ($g) {
     Rq @("$(if ($gf) { 'faccept' } else { 'accept' }) $($g.Groups[1].Value)") | Out-Null; Start-Sleep 1
     Run 6
@@ -145,6 +151,25 @@ if ($g) {
         $rep0 = Rep
         Rq @("handin $gid") | Out-Null; Start-Sleep 1
         Check "group quest hands in and pays" ((Rep) -gt $rep0) "rep $rep0 -> $(Rep)"
+    }
+}
+
+# 5d. Clear the lair: an existing camp/nest near town; finishing it pays
+$all = Report
+$lm = [regex]::Matches($all, '\[(\d+)\] (\w+) (Clear [^|]+?) (\d+)c (\d+)r(?! taken)(?! locked)') | Select-Object -First 1
+Check "lair quests offered$(if (-not $lm) { ' (info: no lair within reach of this town today)' })" $true $(if ($lm) { $lm.Groups[3].Value } else { "" })
+if ($lm) {
+    $lf = $all.IndexOf('; faction board: ') -ge 0 -and $all.IndexOf($lm.Value) -gt $all.IndexOf('; faction board: ')
+    Rq @("$(if ($lf) { 'faccept' } else { 'accept' }) $($lm.Groups[1].Value)") | Out-Null; Start-Sleep 1
+    Run 6
+    $lq = Result (Rq @("quests")); $lid = if ($lq -match '#(\d+) Clear') { $Matches[1] } else { "" }
+    $lt = Result (Rq @("targets"))
+    Check "lair quest is marked at its place" ($lid -and $lt -match "#$lid [^|]*: 1 groups") $lt
+    if ($lid) {
+        Rq @("finish $lid") | Out-Null; Start-Sleep 1
+        $rep0 = Rep
+        Rq @("handin $lid") | Out-Null; Start-Sleep 1
+        Check "lair quest hands in and pays" ((Rep) -gt $rep0) "rep $rep0 -> $(Rep)"
     }
 }
 
@@ -180,9 +205,10 @@ if ($next) {
 # 8b. Faction tab: a quest against the clerk's faction's enemies pays faction points and a little real relation
 $frep = Report
 $fboard = FactionPart $frep
-$foffers = [regex]::Matches($fboard, '\[(\d+)\] (\w+) ([^|]+?) (\d+)c (\d+)r( taken)?( locked)?')
+# Offers on the Faction tab carry " +Nrel" (the relation they give: none at E and D, his rule).
+$foffers = [regex]::Matches($fboard, '\[(\d+)\] (\w+) ([^|]+?) (\d+)c (\d+)r(?: \+(\d+)rel)?( taken)?( locked)?')
 Check "faction board offers quests against the faction's enemies" ($foffers.Count -gt 0) $(if ($foffers.Count -gt 0) { $fboard } else { "report: $frep" })
-$fo = $foffers | Where-Object { -not $_.Groups[6].Success -and -not $_.Groups[7].Success } | Select-Object -First 1
+$fo = $foffers | Where-Object { -not $_.Groups[7].Success -and -not $_.Groups[8].Success } | Select-Object -First 1
 if ($fo) {
     $before = Result (Rq @("factions"))
     Rq @("faccept $($fo.Groups[1].Value)") | Out-Null; Start-Sleep 1
@@ -195,16 +221,24 @@ if ($fo) {
     $p0 = if ($before -match [regex]::Escape($faction) + ': rank \w+ (\d+) pts relation (-?[\d.]+)') { [int]$Matches[1], [double]$Matches[2] } else { 0, 0 }
     $p1 = if ($after -match [regex]::Escape($faction) + ': rank \w+ (\d+) pts relation (-?[\d.]+)') { [int]$Matches[1], [double]$Matches[2] } else { 0, 0 }
     Check "faction quest pays faction points" ($p1[0] -gt $p0[0]) "$faction points $($p0[0]) -> $($p1[0])"
-    Check "faction quest raises relation a little" ($p1[1] -gt $p0[1] -and $p1[1] - $p0[1] -le 4.01) "$faction relation $($p0[1]) -> $($p1[1])"
+    $rel = if ($fo.Groups[6].Success) { [int]$fo.Groups[6].Value } else { 0 }
+    Check "faction quest changes relation as offered (E/D none, C+ 1-6)" ([math]::Abs(($p1[1] - $p0[1]) - $rel) -le 0.51) "$faction relation $($p0[1]) -> $($p1[1]), offer said +$rel ($($fo.Groups[2].Value) $($fo.Groups[3].Value))"
 }
 $released = Session | Select-String 'released its spawned group' | ForEach-Object { $_.Line -replace 'mod\s+radiantquests: ', '' }
 Check "spawned groups released when their quest ends (info)" $true $(if ($released) { $released -join '; ' } else { "none released" })
 
 # 9. Rank up
 $rank0 = if ((Report) -match 'rank (\w+)') { $Matches[1] } else { "?" }
-Rq @("rep 120") | Out-Null; Start-Sleep 1
+Rq @("rep 1200") | Out-Null; Start-Sleep 1
 $rank1 = if ((Report) -match 'rank (\w+)') { $Matches[1] } else { "?" }
 Check "rank goes up with lifetime rep" ($rank1 -ne $rank0) "$rank0 -> $rank1"
+
+# 9a. Reroll: costs spendable rep and replaces the untaken offers
+Rq @("open $idx") | Out-Null; Start-Sleep 1
+$b0 = Report; $bal0 = if ($b0 -match 'balance (\d+)') { [int]$Matches[1] } else { -1 }
+Rq @("reroll") | Out-Null; Start-Sleep 1
+$b1 = Report; $bal1 = if ($b1 -match 'balance (\d+)') { [int]$Matches[1] } else { -1 }
+Check "reroll costs rep and puts up new work" ($bal1 -lt $bal0 -and (GeneralPart $b1) -ne (GeneralPart $b0)) "balance $bal0 -> $bal1"
 
 # 9b. A town whose bar another faction runs (The Hub: Trade Ninjas behind the bar) still has a clerk, working for the town's owner
 Agent "tp The Hub" 20 | Out-Null

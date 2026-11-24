@@ -14,6 +14,9 @@ using Meitou.Data.Gameplay;
 
 namespace RadiantQuests;
 
+/// <summary>A lair: a camp, nest or outpost (its TOWN record), how strong and how many its residents are, and its owner (null: wild nest).</summary>
+public sealed record Lair(string Id, string Name, double Unit, int Residents, string? Owner);
+
 /// <summary>Something a quest can ask you to kill: an animal race (hunt) or a faction's people (cull).</summary>
 public sealed record Target(string Kind, string Id, string Name, double Unit, int Rank);
 
@@ -38,31 +41,21 @@ public sealed class Catalog
     /// <summary>A faction's (family head's) typical fighter strength, for a real group's difficulty.</summary>
     public IReadOnlyDictionary<string, double> UnitOf { get; private init; } = new Dictionary<string, double>();
 
-    /// <summary>
-    /// The group-strength lines between ranks (D|C, C|B, B|A, A|S): the 30/55/75/90 per cent points of every faction's typical squad (fighter
-    /// strength times its usual size) in the load order. A real group's rank is where its strength falls among them.
-    /// </summary>
-    public double[] GroupLines { get; private init; } = [1, 2, 3, 4];
-
     /// <summary>How many people a faction (family head) usually roams in a group with.</summary>
     public IReadOnlyDictionary<string, double> SizeOf { get; private init; } = new Dictionary<string, double>();
 
     /// <summary>How many of an animal race usually come together (its packs, herds and nests).</summary>
     public IReadOnlyDictionary<string, double> PackOf { get; private init; } = new Dictionary<string, double>();
 
-    /// <summary>The hunt rank lines: as <see cref="GroupLines"/>, from every animal race's typical pack (strength times pack size).</summary>
-    public double[] HuntLines { get; private init; } = [1, 2, 3, 4];
-
     /// <summary>
     /// The rank (0 D .. 4 S) of a quest to defeat <paramref name="need"/> of a target with fighters of <paramref name="unit"/> strength that
     /// usually come <paramref name="typical"/> together: you face the ones you must defeat plus half of the rest of their group (you rarely get
     /// them alone), and that strength is placed on the scale of the load order's typical squads (or packs, for a hunt).
     /// </summary>
-    public int QuestRank(string kind, double unit, int need, double typical)
-    {
-        double faced = need + 0.5 * Math.Max(0, typical - need);
-        return Difficulty.RankOf(Fight(unit, faced));
-    }
+    public int QuestRank(string kind, double unit, int need, double typical) => Difficulty.RankOf(QuestScore(unit, need, typical));
+
+    /// <summary>The fight score behind <see cref="QuestRank"/>.</summary>
+    public static double QuestScore(double unit, int need, double typical) => Fight(unit, need + 0.5 * Math.Max(0, typical - need));
 
     /// <summary>
     /// How hard a fight against <paramref name="count"/> fighters of <paramref name="unit"/> strength is: strength squared times the count, so quality
@@ -106,12 +99,55 @@ public sealed class Catalog
     /// </summary>
     public IReadOnlyDictionary<string, IReadOnlySet<string>> TemplateRegions { get; private init; } = new Dictionary<string, IReadOnlySet<string>>();
 
+    HashSet<string>? _wildRegions;
+
+    /// <summary>How many a squad template usually holds (people and animals), for spawning a group that fits a quest's count.</summary>
+    public IReadOnlyDictionary<string, double> TemplateSize { get; private init; } = new Dictionary<string, double>();
+
+    /// <summary>The fewest a squad template can hold (the low end of every range in its data): a board's count never asks for more.</summary>
+    public IReadOnlyDictionary<string, int> TemplateMinSize { get; private init; } = new Dictionary<string, int>();
+
+    /// <summary>The most a squad template can hold (the high end of every range): a top-up never brings more than what is missing.</summary>
+    public IReadOnlyDictionary<string, int> TemplateMaxSize { get; private init; } = new Dictionary<string, int>();
+
+    /// <summary>
+    /// Each region's extra danger: how far the median fight score of the hostile groups its spawn lists and nests hold (not guild factions'
+    /// groups: traders, patrols) is above that of the median region (0 for a typical or calm one). Built from the data, so modded regions and
+    /// creatures get one the same way.
+    /// </summary>
+    public IReadOnlyDictionary<string, double> RegionDanger { get; private init; } = new Dictionary<string, double>();
+
+    /// <summary>Every region some group naturally spawns in (land where things live).</summary>
+    public IReadOnlySet<string> WildRegions => _wildRegions ??= new HashSet<string>(TemplateRegions.Values.SelectMany(r => r), StringComparer.Ordinal);
+
+    /// <summary>
+    /// Lairs: every TOWN record that is not a town or village (camps, nests, outposts, ruins...) whose residents include fighters, with how strong
+    /// a resident is (people and animals on one scale), how many live there, and its owner's family head (null: wild animals' nest).
+    /// </summary>
+    public IReadOnlyDictionary<string, Lair> Lairs { get; private init; } = new Dictionary<string, Lair>();
+
     /// <summary>Whether a quest for <paramref name="t"/> could spawn more of it (one of its groups has a natural region).</summary>
     public bool CanSpawn(Target t) =>
         (t.Kind == Hunt ? HuntTemplates.GetValueOrDefault(t.Id, []) : CullTemplates.GetValueOrDefault(t.Id, [])).Any(TemplateRegions.ContainsKey);
 
     /// <summary>The family head of <paramref name="faction"/> (itself when it has none).</summary>
     public string Head(string faction) => FamilyHead.GetValueOrDefault(faction, faction);
+
+    Dictionary<string, Target>? _hunts, _factions;
+    HashSet<string>? _outlaws;
+
+    /// <summary>Whether <paramref name="id"/> is an outlaw faction (a General cull target).</summary>
+    public bool IsOutlaw(string id) => (_outlaws ??= new HashSet<string>(Culls.Select(t => t.Id), StringComparer.Ordinal)).Contains(id);
+
+    /// <summary>
+    /// The target a quest names: an animal race for a hunt, else a faction (war targets first, then the outlaws). Looked up, not searched.
+    /// </summary>
+    public Target? FindTarget(string kind, string id)
+    {
+        _hunts ??= Hunts.GroupBy(t => t.Id).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        _factions ??= WarTargets.Concat(Culls).GroupBy(t => t.Id).ToDictionary(g => g.Key, g => g.First(), StringComparer.Ordinal);
+        return kind == Hunt ? _hunts.GetValueOrDefault(id) ?? _factions.GetValueOrDefault(id) : _factions.GetValueOrDefault(id);
+    }
 
     /// <summary>Faction names by id.</summary>
     public IReadOnlyDictionary<string, string> FactionNames { get; }
@@ -142,11 +178,22 @@ public sealed class Catalog
         // Nothing here reads your relations: the game data only. Whether a clerk deals with you is checked against the live relations in play.
         var start = FactionRelations.Build(factions);
 
-        // Owners of a town or village with a bar (its TOWN record lists bar squads).
+        // Owners of a town or village where someone can give work: a bar (its TOWN record lists bar squads), else a trader's shop or a
+        // headquarters among its residents (hive villages and other places without a bar).
+        var designationOf = new Dictionary<string, int>(StringComparer.Ordinal);
+        int Designation(string id)
+        {
+            if (designationOf.TryGetValue(id, out int d)) return d;
+            d = 0;
+            if (db.Find(id) is { Type: FcsRecordType.SquadTemplate } rec)
+                try { d = SquadTemplate.From(rec).BuildingDesignation; } catch { }
+            return designationOf[id] = d;
+        }
         var owners = new HashSet<string>(StringComparer.Ordinal);
         foreach (var r in db.OfType(FcsRecordType.Town))
         {
-            if (TownDataOf(r) is not { Faction: { } owner } town || town.BarSquads.Count == 0) continue;
+            if (TownDataOf(r) is not { Faction: { } owner } town) continue;
+            if (town.BarSquads.Count == 0 && !town.Residents.Any(l => Designation(l.Id) is 1 or 3 or 8)) continue;
             if (town.Type is not (TownType.Town or TownType.Village)) continue;
             if (owner == FactionData.PlayerId || !names.ContainsKey(owner) || factions.First(f => f.Id == owner).NotReal) continue;
             owners.Add(owner);
@@ -253,7 +300,6 @@ public sealed class Catalog
         var cullTemplates = new Dictionary<string, List<string>>(StringComparer.Ordinal);
         var war = new List<(string Id, double Unit)>();
         var sizeOf = new Dictionary<string, double>(StringComparer.Ordinal);
-        var squadScores = new List<double>();
         foreach (var f in factions)
         {
             if (f.Id == FactionData.PlayerId || f.NotReal || head.ContainsKey(f.Id) || ov.Blocked(f.Id)) continue;
@@ -287,7 +333,6 @@ public sealed class Catalog
                 if (familyOutlaw) culls.Add((f.Id, unit));
                 war.Add((f.Id, unit));
                 sizeOf[f.Id] = sizes.Count > 0 ? sizes.Average() : 1;
-                foreach (var size in sizes) squadScores.Add(Fight(unit, size));
                 cullTemplates[f.Id] = templates;
             }
         }
@@ -390,24 +435,86 @@ public sealed class Catalog
             if (FirstRef(person, "race") is { } race) raceOf.TryAdd(person.StringId, race);
 
         var hunts = animalScores.Where(kv => kv.Value.Count > 0)
-            .Select(kv => (Id: kv.Key, Unit: kv.Value.Average() * Strength(kv.Key)))
+            .Select(kv => (Id: kv.Key, Unit: (kv.Value.Average() + kv.Value.Max()) / 2 * Strength(kv.Key)))
             .ToList();
 
         var huntTargets = Ranked(hunts, id => db.Find(id)?.Name is { Length: > 0 } n ? n : id, Hunt);
         var packOf = packs.ToDictionary(kv => kv.Key, kv => kv.Value.Average(), StringComparer.Ordinal);
         // The hunt scale is built from small fights (at most three animals): a big herd of weak animals is no hard hunt.
-        var packScores = hunts.Select(h => Fight(h.Unit, Math.Min(3, packOf.GetValueOrDefault(h.Id, 1)))).ToList();
         var cullTargets = Ranked(culls, id => names.GetValueOrDefault(id, id), Cull);
+        // Lairs (Clear the lair quests): camps, nests and outposts with fighters living in them.
+        var lairs = new Dictionary<string, Lair>(StringComparer.Ordinal);
+        foreach (var r in db.OfType(FcsRecordType.Town))
+        {
+            if (ov.Blocked(r.StringId) || TownDataOf(r) is not { } town || town.Type is TownType.Town or TownType.Village) continue;
+            if (town.Faction is { } owner && (owner == FactionData.PlayerId || guild.Contains(owner) || ov.Blocked(owner))) continue;
+            var scores = new List<double>();
+            double count = 0;
+            foreach (var l in town.Residents)
+            {
+                if (TemplateOf(db, l.Id) is not { IsUnique: false } t) continue;
+                foreach (var m in Members(t).Concat(t.Animals).Concat(t.Animals2))
+                {
+                    if (db.Find(m.Id) is not { } rec || rec.GetBool("unique")) continue;
+                    double n = m.V1 == 0 || m.V1 == 100 ? Math.Max(1, m.V0) : (Math.Max(1, m.V0) + Math.Max(1, m.V1)) / 2.0;
+                    if (rec.Type == FcsRecordType.Character) scores.Add(PersonScore(db, rec));
+                    else if (rec.Type == FcsRecordType.AnimalCharacter) scores.Add(AnimalScore(db, rec));
+                    else continue;
+                    count += n;
+                }
+            }
+            if (scores.Count == 0 || count < 3) continue;
+            string? headOwner = town.Faction is { } o ? (head.TryGetValue(o, out var h) ? h : o) : null;
+            lairs[r.StringId] = new Lair(r.StringId, town.Name.Trim(), scores.Average(), (int)Math.Round(count), headOwner);
+        }
+
+        // Region danger: per region, the median strength of the hostile groups that spawn there.
+        var regionScores = new Dictionary<string, List<double>>(StringComparer.Ordinal);
+        foreach (var (templateId, regs) in regions)
+        {
+            if (TemplateOf(db, templateId) is not { IsUnique: false } t || (t.Faction is { } tf && (guild.Contains(tf) || tf == FactionData.PlayerId))) continue;
+            var scores = new List<double>();
+            double count = 0;
+            foreach (var m in Members(t).Concat(t.Animals).Concat(t.Animals2))
+            {
+                if (db.Find(m.Id) is not { } rec || rec.GetBool("unique")) continue;
+                double n = m.V1 == 0 || m.V1 == 100 ? Math.Max(1, m.V0) : (Math.Max(1, m.V0) + Math.Max(1, m.V1)) / 2.0;
+                if (rec.Type == FcsRecordType.Character) scores.Add(PersonScore(db, rec));
+                else if (rec.Type == FcsRecordType.AnimalCharacter) scores.Add(AnimalScore(db, rec));
+                else continue;
+                count += n;
+            }
+            if (scores.Count == 0) continue;
+            double score = Fight(scores.Average(), count);
+            foreach (var r in regs)
+            {
+                if (!regionScores.TryGetValue(r, out var list)) regionScores[r] = list = [];
+                list.Add(score);
+            }
+        }
+        // Only what is above a typical region counts (every region has some middling groups roaming): the excess over the median region.
+        var regionMedians = regionScores.ToDictionary(kv => kv.Key, kv => Median(kv.Value), StringComparer.Ordinal);
+        double typicalRegion = Median([.. regionMedians.Values]);
+        var regionDanger = regionMedians.ToDictionary(kv => kv.Key, kv => Math.Max(0, kv.Value - typicalRegion), StringComparer.Ordinal);
+
+        // Each spawnable template's size: usual, fewest and most (one pass over the data).
+        var templateSizes = regions.Keys.Select(id => (Id: id, T: TemplateOf(db, id))).Where(x => x.T is not null)
+            .Select(x => (x.Id, Usual: AllPlanned(db, x.T!), Least: (int)Math.Round(AllPlanned(db, x.T!, -1)), Most: (int)Math.Round(AllPlanned(db, x.T!, 1))))
+            .ToList();
+
         var catalog = new Catalog(huntTargets, cullTargets, guild, raceOf, names)
         {
+            RegionDanger = regionDanger,
+            TemplateSize = templateSizes.ToDictionary(x => x.Id, x => x.Usual, StringComparer.Ordinal),
+            TemplateMinSize = templateSizes.ToDictionary(x => x.Id, x => x.Least, StringComparer.Ordinal),
+            TemplateMaxSize = templateSizes.ToDictionary(x => x.Id, x => x.Most, StringComparer.Ordinal),
             TemplateRegions = regions.ToDictionary(kv => kv.Key, kv => (IReadOnlySet<string>)kv.Value, StringComparer.Ordinal),
+            Lairs = lairs,
             Bandits = bandits,
             WarTargets = Ranked(war, id => names.GetValueOrDefault(id, id), Cull),
             UnitOf = war.ToDictionary(w => w.Id, w => w.Unit, StringComparer.Ordinal),
             SizeOf = sizeOf,
             PackOf = packOf,
-            HuntLines = Lines(packScores),
-            GroupLines = Lines(squadScores),
             FamilyHead = head,
             CullTemplates = cullTemplates.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.Ordinal),
             HuntTemplates = huntTemplates.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.Ordinal),
@@ -419,6 +526,20 @@ public sealed class Catalog
     }
 
     /// <summary>How many people a squad template usually brings (the game's count rule: v0, or v0..v1 unless v1 is 0 or 100).</summary>
+    /// <summary>Everyone a template plans: its people and its animals.</summary>
+    /// <summary>Everyone a template plans, people and animals: the usual number (<paramref name="end"/> 0), the fewest (-1) or the most (1).</summary>
+    static double AllPlanned(GameDatabase db, SquadTemplate t, int end = 0)
+    {
+        double Pick(double lo, double hi) => end < 0 ? lo : end > 0 ? hi : (lo + hi) / 2.0;
+        double Count(RecordLink l) => l.V1 == 0 || l.V1 == 100 ? Math.Max(1, l.V0) : Pick(Math.Max(1, l.V0), Math.Max(1, l.V1));
+        bool Person(RecordLink l) => db.Find(l.Id) is { Type: FcsRecordType.Character };
+        double n = t.Leader is { } leader && Person(leader) ? 1 : 0;
+        n += t.Squad.Where(Person).Sum(Count) + t.Squad2.Where(Person).Sum(Count);
+        if (t.ChooseFrom.Any(Person)) n += Pick(t.NumRandomChars, Math.Max(t.NumRandomChars, t.NumRandomCharsMax));
+        n += t.Animals.Sum(Count) + t.Animals2.Sum(Count);
+        return Math.Max(1, n);
+    }
+
     static double PlannedPeople(GameDatabase db, SquadTemplate t)
     {
         static double Count(RecordLink l) => l.V1 == 0 || l.V1 == 100 ? Math.Max(1, l.V0) : (Math.Max(1, l.V0) + Math.Max(1, l.V1)) / 2.0;
@@ -427,15 +548,6 @@ public sealed class Catalog
         n += t.Squad.Where(Person).Sum(Count) + t.Squad2.Where(Person).Sum(Count);
         if (t.ChooseFrom.Any(Person)) n += (t.NumRandomChars + Math.Max(t.NumRandomChars, t.NumRandomCharsMax)) / 2.0;
         return Math.Max(1, n);
-    }
-
-    /// <summary>The 30/55/75/90 per cent points of <paramref name="scores"/> (rising), or a plain 1-4 when there are none.</summary>
-    static double[] Lines(List<double> scores)
-    {
-        if (scores.Count == 0) return [1, 2, 3, 4];
-        var s = scores.Order().ToList();
-        double At(double p) => s[(int)Math.Clamp(Math.Round(p * (s.Count - 1)), 0, s.Count - 1)];
-        return [At(0.30), At(0.55), At(0.75), At(0.90)];
     }
 
     /// <summary>The animal races in <paramref name="templates"/>.</summary>
@@ -564,6 +676,12 @@ public sealed class Catalog
     }
 
     /// <summary>Sorts <paramref name="units"/> and gives each a rank by where it falls (30/25/20/15/10 per cent, D to S).</summary>
+    static double Median(List<double> v)
+    {
+        var s = v.OrderBy(x => x).ToList();
+        return s.Count == 0 ? 0 : s.Count % 2 == 1 ? s[s.Count / 2] : (s[s.Count / 2 - 1] + s[s.Count / 2]) / 2;
+    }
+
     static List<Target> Ranked(List<(string Id, double Unit)> units, Func<string, string> name, string kind)
     {
         var sorted = units.OrderBy(u => u.Unit).ThenBy(u => u.Id, StringComparer.Ordinal).ToList();

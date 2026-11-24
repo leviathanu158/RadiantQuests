@@ -32,6 +32,14 @@ foreach (var name in new[] { "Starving Bandits", "Dust Bandits", "The Holy Natio
     foreach (var c in cat.WarTargets.Where(c => c.Name.Trim() == name))
         Console.WriteLine($"  defeat {name,-16} n=2,4,8: " + string.Join(" ", new[] { 2, 4, 8 }.Select(n => Ranks.Name(cat.QuestRank(Catalog.Cull, cat.UnitOf.GetValueOrDefault(c.Id, c.Unit), n, cat.SizeOf.GetValueOrDefault(c.Id, 1))))));
 
+if (Environment.GetEnvironmentVariable("RQ_TEMPLATE") is { Length: > 0 } tid)
+{
+    Console.WriteLine($"== template {tid}: size {cat.TemplateSize.GetValueOrDefault(tid)} races {string.Join(", ", cat.TemplateRaces.GetValueOrDefault(tid) ?? new HashSet<string>())}");
+    foreach (var h in cat.Hunts.Where(h => h.Name.Contains("Antelope"))) Console.WriteLine($"  hunt race {h.Id} = {h.Name} templates {string.Join(", ", cat.HuntTemplates.GetValueOrDefault(h.Id) ?? [])}");
+}
+Console.WriteLine("== region danger (median hostile group above the typical region; 0.25 of it is what a quest there gains):");
+foreach (var (r, d) in cat.RegionDanger.OrderBy(kv => kv.Value))
+    Console.WriteLine($"  {r,-40} {d,8:0}  as a group: {Ranks.Name(Difficulty.RankOf(d)),-2}  quarter adds {d * 0.25,7:0}");
 Console.WriteLine($"== {cat.Checks.Count} notes for review:");
 foreach (var note in cat.Checks) Console.WriteLine("  - " + note);
 return 0;

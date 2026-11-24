@@ -6,3 +6,4 @@ mods.cfg.backup-*
 test/shots/
 test/results.txt
 test/catalog-*.txt
+crash-logs/
