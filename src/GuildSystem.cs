@@ -74,7 +74,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     int Rank => _set.RankOf(_s.Lifetime);
 
     /// <summary>Your rank on <paramref name="faction"/>'s Faction board (from your lifetime points with it).</summary>
-    int RankWith(string faction) => _set.RankOf(_s.PointsWith(faction));
+    int RankWith(string faction) => _set.FactionRankOf(_s.PointsWith(faction));
 
     public string TownName(int site) => site >= 0 && site < _data.Sites.Count ? _data.Sites[site].Town.Name : "the town";
 
@@ -276,6 +276,13 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         var offer = offers[a.Slot];
         int rank = a.Faction ? RankWith(clerk.Faction) : Rank;
         if (offer.Taken) return;
+        // A faction gives you its own work only once the guild vouches for you (his rule, 2026-11-24).
+        if (a.Faction && offer.Rank < _set.FactionFromRank) return;   // from a board made before the rule: never taken
+        if (a.Faction && Rank < _set.FactionFromRank)
+        {
+            RadiantQuestsMod.Toast($"Prove yourself to the guild first: {clerk.FactionName} gives its own work from guild rank {Ranks.Name(_set.FactionFromRank)}.");
+            return;
+        }
         if (offer.Rank > rank)
         {
             RadiantQuestsMod.Toast(a.Faction
@@ -350,11 +357,14 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             RadiantQuestsMod.Toast($"Quest done: {q.Describe()}. +{cats} cats, +{rep} guild rep.{cut}");
         else
         {
+            // Faction work: full points with the faction (and relations), only a share of guild rep (his rule, 2026-11-24).
             int relation = (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * share);
-            RadiantQuestsMod.Toast($"Quest done for {clerk.FactionName}: {q.Describe()}. +{cats} cats, +{rep} guild rep, +{rep} "
-                + $"{clerk.FactionName} points" + (relation > 0 ? $", relations +{relation}." : ".") + cut);
+            int guildRep = (int)Math.Round(rep * Math.Clamp(_set.FactionGuildRep, 0, 1));
+            RadiantQuestsMod.Toast($"Quest done for {clerk.FactionName}: {q.Describe()}. +{cats} cats, +{rep} {clerk.FactionName} points, "
+                + $"+{guildRep} guild rep" + (relation > 0 ? $", relations +{relation}." : ".") + cut);
             GainPoints(q.GiverFaction, rep);
             Access.ChangeRelation(world, _data.FactionIndex(q.GiverFaction), relation, "Guild quest");
+            rep = guildRep;
         }
         GainRep(rep);
     }
@@ -743,7 +753,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         foreach (var f in _clerks.Values.Select(c => c.Faction).Concat(_s.FactionPoints.Keys).Distinct())
         {
             int fr = RankWith(f);
-            standings[f] = new FactionStanding(fr, _s.PointsWith(f), _set.NextRankAt(fr), Access.Relation(_data.FactionIndex(f), _data.PlayerFaction));
+            standings[f] = new FactionStanding(fr, _s.PointsWith(f), _set.FactionNextAt(fr), Access.Relation(_data.FactionIndex(f), _data.PlayerFaction));
         }
         Volatile.Write(ref s_view, new GuildView(world.Tick, world.GameHours, _s.Lifetime, _s.Balance, rank, _set.NextRankAt(rank), quests, boards,
             new Dictionary<CharacterId, ClerkInfo>(_clerks), standings));

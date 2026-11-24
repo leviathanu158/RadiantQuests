@@ -31,10 +31,13 @@ public sealed class GuildUi : IUiExtension
     static readonly List<(string Text, long Until)> s_toasts = [];
 
     string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "";
-    string _move = "", _resize = "", _scale = "";
+    string _move = "", _resize = "", _scale = "", _hint = "";
+    /// <summary>A hint shown beside the pointer while it is over a control that has one (Meitou has no tooltips for mod controls).</summary>
+    static (string Text, Vector2 At)? s_hint;
     string _window = "", _row = "", _toast = "", _tracker = "", _grip = "";
     /// <summary>Per font step (WindowLayout.Fonts): text, dim text, titles (one step bigger), buttons, pressed buttons.</summary>
-    readonly string[] _text = new string[4], _dim = new string[4], _title = new string[4], _button = new string[4], _buttonOn = new string[4];
+    readonly string[] _text = new string[4], _dim = new string[4], _title = new string[4], _button = new string[4], _buttonOn = new string[4],
+        _buttonGrey = new string[4];
 
     public void Register(UiRegistration r)
     {
@@ -54,6 +57,14 @@ public sealed class GuildUi : IUiExtension
                 Hover = new(0.38f, 0.32f, 0.22f, 1),
                 Active = new(0.48f, 0.40f, 0.26f, 1),
                 Disabled = new(0.13f, 0.12f, 0.11f, 1),
+                TextAlign = "Center",
+            });
+            _buttonGrey[i] = r.RegisterStyle($"button-grey{i}", new UiStyle
+            {
+                FontName = font,
+                Background = new(0.13f, 0.12f, 0.11f, 1),
+                Hover = new(0.16f, 0.15f, 0.13f, 1),
+                Text = new(0.45f, 0.43f, 0.40f, 1),
                 TextAlign = "Center",
             });
             _buttonOn[i] = r.RegisterStyle($"button-on{i}", new UiStyle
@@ -80,6 +91,13 @@ public sealed class GuildUi : IUiExtension
         _tab = r.RegisterAction("tab", a => s_tab = a.Argument);
         _rank = r.RegisterAction("rank", a => s_rankTab = int.TryParse(a.Argument, out int v) ? Math.Clamp(v, 0, Ranks.Top) : 0);
         _journal = r.RegisterAction("journal", _ => ToggleJournal());
+        // A greyed-out control's reason: shown beside the pointer while over it, and as a message when clicked.
+        _hint = r.RegisterAction("hint", a =>
+        {
+            if (a.Kind == UiEventKind.Enter) s_hint = (a.Argument, a.Position);
+            else if (a.Kind == UiEventKind.Leave) s_hint = null;
+            else if (a.Kind == UiEventKind.Press) RadiantQuestsMod.Toast(a.Argument);
+        });
         _accept = r.RegisterAction("accept", a =>
         {
             if (int.TryParse(a.Argument, out int slot)) Send(new AcceptOffer(s_clerk, s_site, slot, s_tab == "faction") { Tick = Tick });
@@ -224,6 +242,15 @@ public sealed class GuildUi : IUiExtension
             }
             else if (s_journal && view is not null) root.Children.Add(Journal(f, view));
             if (s_toasts.Count > 0) root.Children.Add(Toasts());
+            if (s_hint is { } hint && (s_open || s_journal))
+                root.Children.Add(new UiNode("rq-hint", UiNodeKind.Label)
+                {
+                    Placement = new UiPlacement(Math.Min(620, 14 + hint.Text.Length * 8), 30, Left: hint.At.X + 18, Top: hint.At.Y + 20),
+                    Style = _toast,
+                    Text = hint.Text,
+                    Pickable = false,
+                });
+            else if (!s_open && !s_journal) s_hint = null;
             return root;
         }
         catch (Exception e)
@@ -349,7 +376,14 @@ public sealed class GuildUi : IUiExtension
             _text[lv], small));
 
         // The faction tab ranks by your points with the clerk's faction.
+        // A faction's own work opens at a guild rank (his rule, 2026-11-24): before it, its tab is greyed out with the reason on hover; its
+        // rank buttons are only those its work comes at (C up by default).
+        int factionFrom = Math.Clamp(RadiantQuestsMod.Settings.FactionFromRank, 0, Ranks.Top);
+        bool factionOpen = view.Rank >= factionFrom;
+        if (!factionOpen && s_tab == "faction") s_tab = "general";
         bool factionTab = s_tab == "faction" && RadiantQuestsMod.Settings.FactionQuests;
+        int firstRank = factionTab ? factionFrom : 0;
+        if (s_rankTab < firstRank) s_rankTab = firstRank;
         var standing = clerk is not null && view.Factions.TryGetValue(clerk.Faction, out var st) ? st : new FactionStanding(0, 0, RadiantQuestsMod.Settings.RankC);
         if (factionTab)
             body.Children.Add(Label("rq-frep", $"{clerk?.FactionName}: rank {Ranks.Name(standing.Rank)}   ·   {standing.Points} points"
@@ -358,7 +392,17 @@ public sealed class GuildUi : IUiExtension
         var tabs = Row("rq-tabs", line);
         tabs.Children.Add(Button("rq-tab-g", "General", _tab, "general", true, 150 * s, lv, !factionTab, line));
         if (RadiantQuestsMod.Settings.FactionQuests)
-            tabs.Children.Add(Button("rq-tab-f", $"{clerk?.FactionName} work", _tab, "faction", true, 260 * s, lv, factionTab, line));
+            tabs.Children.Add(factionOpen
+                ? Button("rq-tab-f", $"{clerk?.FactionName} work", _tab, "faction", true, 260 * s, lv, factionTab, line)
+                : new UiNode("rq-tab-f", UiNodeKind.Button)
+                {
+                    Placement = new UiPlacement(260 * s, line),
+                    Style = _buttonGrey[lv],
+                    Text = $"{clerk?.FactionName} work",
+                    Action = _hint,
+                    Argument = $"Rank up first: {clerk?.FactionName} gives its own work from guild rank {Ranks.Name(factionFrom)} (you are {Ranks.Name(view.Rank)}).",
+                    Pointer = UiPointerEvents.Hover,
+                });
         if (view.Boards.TryGetValue(s_site, out var bv))
             tabs.Children.Add(Button("rq-reroll", $"New quests ({bv.RerollCost} rep)", _reroll, "", bv.RerollCost <= view.Balance, 220 * s, lv, false, line));
         body.Children.Add(tabs);
@@ -368,7 +412,7 @@ public sealed class GuildUi : IUiExtension
         var tabOffers = factionTab ? board?.FactionOffers : board?.Offers;
         int myRank = factionTab ? standing.Rank : view.Rank;
         var ranks = Row("rq-ranks", line);
-        for (int b = 0; b <= Ranks.Top; b++)
+        for (int b = firstRank; b <= Ranks.Top; b++)
         {
             int n = tabOffers?.Count(o => o.Rank == b && !o.Taken) ?? 0;
             string caption = $"{Ranks.Name(b)} ({n})" + (b > myRank ? " locked" : "");
@@ -384,6 +428,8 @@ public sealed class GuildUi : IUiExtension
         // The selected board's quests (taken ones leave the board).
         var offers = tabOffers?.Where(o => o.Rank == s_rankTab && !o.Taken).ToList() ?? [];
         var list = Scroll("rq-offers", listH, line);
+        // (Faction offers below its first rank, from a board made before this rule, are never shown.)
+        if (factionTab) offers = [.. offers.Where(o => o.Rank >= factionFrom)];
         if (board is null) list.Children.Add(Label("rq-wait", "The clerk is fetching today's board...", _dim[lv], line));
         else if (offers.Count == 0)
             list.Children.Add(Label("rq-none", s_rankTab > myRank

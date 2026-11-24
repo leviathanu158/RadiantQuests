@@ -192,6 +192,34 @@ offers, reroll), counts with a grace margin, reachable spawns, honest markers; t
 ==========================================================================================
 7. NEXT STEPS (in rough order)
 ==========================================================================================
+FULL SCENARIO on 0.8.16 with his FULL mod list (rqtest): ALL PASS (26 checks; knockout skipped as Manual Combat is ticked; the General tab had
+no wipe-out that day, the faction check took a C wipe-out instead). mod-check PASS on rqtest. Test fixes: pick-save ranks by score, saves
+within a quarter of the best are equal and named saves beat autosaves (it had picked an autosave, then the vanilla save); scenario's
+wipe-out pick skips locked offers with "+Nrel" and faction offers below guild rank C.
+
+STATE 0.8.16 (2026-11-24, installed, mod-check PASS, quick board check PASS): ONE BROUGHT-IN FIGHT PER ENEMY PER RANK (his report: Cannibals
+everywhere; e.g. "Defeat 2 Cannibals", "Wipe out a group of 3 Cannibals" and a Cannibal Loner all at E). Pick: FightKeyOf = "fight:rank:
+target" for hunt/defeat/wipe-out; a brought-in offer (PlatoonKey 0) is skipped when its enemy already has a job at that rank; real groups
+are exempt. Check on his vanilla save at the Hub: no repeats on either tab. His Sho-Battai boards DID have skimmers (D tab); both were
+made with "0 groups near" (nothing roaming placed there yet).
+
+STATE 0.8.14-0.8.15 (2026-11-24, installed, mod-check PASS; he tested 0.8.14 himself; 0.8.15 is the fix of what he found):
+ - Rank thresholds: D 750, C 2250, B 5000, A 9000, S 15000, SS 25000 (higher work is rare: ~11-14 quests of the rank below per step).
+ - FACTION WORK (his rules): opens at guild rank C (setting FactionFromRank 2); faction rank starts there and climbs in half-length steps
+   (FactionRankScale 0.5: SettingsCopy.FactionRankOf / FactionNextAt; their B at 1375 points, A 3375, S 6375, SS 11375); faction work pays
+   full faction points + relations but only FactionGuildRep 0.5 of guild rep. General work gives NO faction points (he rejected that:
+   General quests are taken and handed in anywhere). Faction tab has no E/D work at all (MakeTab floor).
+ - 0.8.15 UI: the faction tab button itself is greyed (style button-grey) before guild rank C; hovering shows "Rank up first: ..." beside
+   the pointer (our own hint label via UiPointerEvents.Hover Enter/Leave; Meitou has no tooltips for mod nodes), clicking shows it as a
+   message. The faction tab's rank buttons are only C..SS. Offers below the floor from boards made before the rule are hidden and refused.
+ - scenario.ps1/quick.ps1 pick the save by mod list when none is named; scenario reaches rank C before the faction checks and checks
+   the half guild rep. Full scenario NOT run on 0.8.14+ (he stopped it to test himself).
+
+STATE 0.8.13 (2026-11-24, installed, mod-check PASS): rank thresholds 1.5x by default (his request, still settings): D 750, C 2250, B 6000,
+A 13500, S 27000, SS 52500 (avg rep per quest E 50, D 100, C 200, B 350, A 550, S 800, SS 1200 -> ~15 quests of a rank per step).
+OPEN (his question): should Faction-tab quests give guild rep at all? Proposed: faction work pays full faction points + relation but only
+a share of guild rep (setting, 0.5), so choosing a tab is a real decision. Awaiting his answer.
+
 STATE 0.8.12 (2026-11-24, installed, mod-check PASS): test channel "herd <quest>" (logs each animal's live age + scores: real, all adult,
 adults >= 0.6 alone) and "setages <quest> a b c ..." (sets the group's ages in order). VERIFIED IN GAME on the Hub Garru herd:
 real ages 0.68/0.22/0.16/0.20 -> 730 D (its one adult alone 309); set 1,1,0.05,0.05 -> 1802 C vs 2 adults alone 1398 D; set 0.6,0.6,0.2,0.2

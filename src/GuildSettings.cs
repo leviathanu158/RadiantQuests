@@ -37,23 +37,38 @@ public sealed class GuildSettings
     public bool MapMarkers { get; set; } = true;
 
     [Setting("Rep for rank D", Min = 5, Max = 2000, Step = 5, SubGroup = "Ranks",
-        Hint = "Lifetime rep needed for rank D (you start at E). Spending rep at the store never lowers your rank.")]
-    public int RankD { get; set; } = 500;
+        // (His defaults, 2026-11-24: ~15 quests of a rank for D and C; higher work is rarer, so ~11-14 quests of the rank below for B to SS.)
+        Hint = "Lifetime rep needed for rank D (you start at E; about 15 E quests). Each later rank needs about 11 to 15 quests of the rank below. Spending rep at the store never lowers your rank.")]
+    public int RankD { get; set; } = 750;
 
     [Setting("Rep for rank C", Min = 10, Max = 5000, Step = 10, SubGroup = "Ranks")]
-    public int RankC { get; set; } = 1500;
+    public int RankC { get; set; } = 2250;
 
     [Setting("Rep for rank B", Min = 20, Max = 10000, Step = 10, SubGroup = "Ranks")]
-    public int RankB { get; set; } = 4000;
+    public int RankB { get; set; } = 5000;
 
     [Setting("Rep for rank A", Min = 30, Max = 20000, Step = 10, SubGroup = "Ranks")]
     public int RankA { get; set; } = 9000;
 
     [Setting("Rep for rank S", Min = 40, Max = 50000, Step = 10, SubGroup = "Ranks")]
-    public int RankS { get; set; } = 18000;
+    public int RankS { get; set; } = 15000;
 
     [Setting("Rep for rank SS", Min = 50, Max = 100000, Step = 50, SubGroup = "Ranks")]
-    public int RankSS { get; set; } = 35000;
+    public int RankSS { get; set; } = 25000;
+
+    [Setting("Faction work from guild rank", Min = 0, Max = 6, Step = 1, SubGroup = "Ranks",
+        Hint = "A faction gives you its own work (its tab at the clerk) once your guild rank reaches this: 0 E, 1 D, 2 C (default), 3 B... "
+            + "Prove yourself to the guild first. Your rank with a faction starts here.")]
+    public int FactionFromRank { get; set; } = 2;
+
+    [Setting("Faction rank steps", Min = 0.1, Max = 2, Step = 0.05, SubGroup = "Ranks",
+        Hint = "How many points a faction's ranks need compared with the guild's (a faction has fewer towns and less work): 0.5 is half.")]
+    public double FactionRankScale { get; set; } = 0.5;
+
+    [Setting("Guild rep from faction work", Min = 0, Max = 1, Step = 0.05, SubGroup = "Rewards",
+        Hint = "Faction work pays full points with that faction (and relations) but only this share of guild rep: 0.5 is half. "
+            + "General work climbs the guild, faction work the faction.")]
+    public double FactionGuildRep { get; set; } = 0.5;
 
     [Setting("Cats reward", Min = 0.1, Max = 5, Step = 0.05, SubGroup = "Rewards", Hint = "Multiplies the cats every quest pays.")]
     public double CatsMult { get; set; } = 1;
@@ -136,7 +151,8 @@ public sealed class GuildSettings
 
     /// <summary>The settings the world reads, copied in a serial step (one value per tick on every machine).</summary>
     public SettingsCopy Copy() => new(RankD, RankC, RankB, RankA, RankS, RankSS, CatsMult, RepMult, KillHours, KillRefreshHours, FailCost, AbandonCost, TargetRange, Hunts, Culls, SpawnTargets, FactionQuests,
-        GroupQuests, WarBonus, SpawnLimit, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours);
+        GroupQuests, WarBonus, SpawnLimit, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours,
+        Math.Clamp(FactionFromRank, 0, 6), FactionRankScale, FactionGuildRep);
 }
 
 /// <summary>The settings as the world saw them this tick.</summary>
@@ -144,9 +160,29 @@ public sealed record SettingsCopy(int RankD, int RankC, int RankB, int RankA, in
     int KillRefreshHours, double FailCost, double AbandonCost, int TargetRange, bool Hunts, bool Culls,
     bool SpawnTargets, bool FactionQuests, bool GroupQuests, double WarBonus, int SpawnLimit,
     int RefreshDays, int RerollCost, bool ReduceBelowRank, bool LairQuests, int MostPerRank = 7, double StrayChance = 0.15,
-    double StragglerHours = 2, double DangerShare = 0.25, double StuckHours = 1, double DefeatedHours = 3.5)
+    double StragglerHours = 2, double DangerShare = 0.25, double StuckHours = 1, double DefeatedHours = 3.5, int FactionFromRank = 2,
+    double FactionRankScale = 0.5, double FactionGuildRep = 0.5)
 {
     public static SettingsCopy Defaults { get; } = new GuildSettings().Copy();
+
+    /// <summary>
+    /// Your rank with a faction (his rules, 2026-11-24): it starts at the rank faction work opens at (C by default) and climbs with that
+    /// faction's points, each step the guild's step from there times <see cref="FactionRankScale"/> (a faction has fewer towns).
+    /// </summary>
+    public int FactionRankOf(long points)
+    {
+        int rank = FactionFromRank;
+        while (rank < 6 && FactionNextAt(rank) is var next && next >= 0 && points >= next) rank++;
+        return rank;
+    }
+
+    /// <summary>The faction points rank <paramref name="rank"/>'s next step needs, or -1 at the top.</summary>
+    public long FactionNextAt(int rank)
+    {
+        if (rank >= 6) return -1;
+        long baseAt = FactionFromRank <= 0 ? 0 : NextRankAt(FactionFromRank - 1);
+        return (long)Math.Round((NextRankAt(Math.Max(rank, FactionFromRank)) - baseAt) * Math.Max(0.01, FactionRankScale));
+    }
 
     /// <summary>The rank (0 D .. 4 S) for <paramref name="lifetime"/> rep.</summary>
     public int RankOf(long lifetime) => lifetime >= RankSS ? 6 : lifetime >= RankS ? 5 : lifetime >= RankA ? 4 : lifetime >= RankB ? 3

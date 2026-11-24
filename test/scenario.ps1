@@ -3,7 +3,9 @@
 #   .\scenario.ps1               start the game, run, quit the game
 #   .\scenario.ps1 -NoStart      run against a game already started with this script's settings (control dir, test env var)
 #   .\scenario.ps1 -KeepOpen     leave the game running afterwards
-param([string]$Save = "rqtest", [switch]$NoStart, [switch]$KeepOpen)
+param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen)
+# No save named: the one closest to the mod list ticked now (his rule, 2026-11-24).
+if (-not $Save) { $Save = & (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "pick-save.ps1") -Name }
 $ErrorActionPreference = "Continue"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $D = "C:\Kenshi_Meitou\ctl"
@@ -137,8 +139,12 @@ if ($dust) {
 
 # 5c. Group quest: a real group near town, tagged and followed; finishing it pays
 $all = Report
-$g = [regex]::Matches($all, '\[(\d+)\] (\w+) (Wipe out a group of (\d+) [^|]+?) (\d+)c (\d+)r(?! taken)(?! locked)') | Select-Object -First 1
-$gf = $all -match '; faction board: .*' -and $g -and $all.IndexOf($g.Value) -gt $all.IndexOf('; faction board: ')
+$fAt = $all.IndexOf('; faction board: ')
+$myRank = if ($all -match 'rank (\w+) lifetime') { $Matches[1] } else { "E" }
+# Faction work opens at guild rank C (his rule, 2026-11-24): below it only the General tab's wipe-outs can be taken.
+$g = [regex]::Matches($all, '\[(\d+)\] (\w+) (Wipe out a group of (\d+) [^|;]+?) (\d+)c (\d+)r([^|;]*)') |
+    Where-Object { $_.Groups[7].Value -notmatch 'taken|locked' -and ($fAt -lt 0 -or $_.Index -lt $fAt -or $myRank -notin @('E', 'D')) } | Select-Object -First 1
+$gf = $fAt -ge 0 -and $g -and $g.Index -gt $fAt
 Check "group quests offered from real groups near town$(if (-not $g) { ' (info: none within the quest area today)' })" $true $(if ($g) { $g.Groups[3].Value } else { "" })
 if ($g) {
     Rq @("$(if ($gf) { 'faccept' } else { 'accept' }) $($g.Groups[1].Value)") | Out-Null; Start-Sleep 1
@@ -203,7 +209,10 @@ if ($next) {
     Check "a quest out of time fails and costs rep" ($q -eq "no quests" -and $rep1 -le $rep0) "rep $rep0 -> $rep1; $q"
 }
 
-# 8b. Faction tab: a quest against the clerk's faction's enemies pays faction points and a little real relation
+# 8b. Faction tab: a quest against the clerk's faction's enemies pays faction points and a little real relation. Faction work opens at
+# guild rank C (his rule, 2026-11-24): reach it first, then the board is made again so the Faction tab has C work.
+Rq @("rep 2500") | Out-Null; Start-Sleep 1
+Rq @("reroll") | Out-Null; Start-Sleep 1
 $frep = Report
 $fboard = FactionPart $frep
 # Offers on the Faction tab carry " +Nrel" (the relation they give: none at E and D, his rule).
@@ -212,6 +221,7 @@ Check "faction board offers quests against the faction's enemies" ($foffers.Coun
 $fo = $foffers | Where-Object { -not $_.Groups[7].Success -and -not $_.Groups[8].Success } | Select-Object -First 1
 if ($fo) {
     $before = Result (Rq @("factions"))
+    $guild0 = Rep
     Rq @("faccept $($fo.Groups[1].Value)") | Out-Null; Start-Sleep 1
     $fq = Result (Rq @("quests"))
     $fid = if ($fq -match '#(\d+) ') { $Matches[1] } else { "" }
@@ -222,6 +232,8 @@ if ($fo) {
     $p0 = if ($before -match [regex]::Escape($faction) + ': rank \w+ (\d+) pts relation (-?[\d.]+)') { [int]$Matches[1], [double]$Matches[2] } else { 0, 0 }
     $p1 = if ($after -match [regex]::Escape($faction) + ': rank \w+ (\d+) pts relation (-?[\d.]+)') { [int]$Matches[1], [double]$Matches[2] } else { 0, 0 }
     Check "faction quest pays faction points" ($p1[0] -gt $p0[0]) "$faction points $($p0[0]) -> $($p1[0])"
+    $guild1 = Rep; $pts = $p1[0] - $p0[0]
+    Check "faction quest pays half as much guild rep (setting 0.5)" ([math]::Abs(($guild1 - $guild0) - [math]::Round($pts * 0.5)) -le 1) "guild rep $guild0 -> $guild1 for $pts points"
     $rel = if ($fo.Groups[6].Success) { [int]$fo.Groups[6].Value } else { 0 }
     Check "faction quest changes relation as offered (E/D none, C+ 1-6)" ([math]::Abs(($p1[1] - $p0[1]) - $rel) -le 0.51) "$faction relation $($p0[1]) -> $($p1[1]), offer said +$rel ($($fo.Groups[2].Value) $($fo.Groups[3].Value))"
 }
@@ -230,7 +242,7 @@ Check "spawned groups released when their quest ends (info)" $true $(if ($releas
 
 # 9. Rank up
 $rank0 = if ((Report) -match 'rank (\w+)') { $Matches[1] } else { "?" }
-Rq @("rep 1200") | Out-Null; Start-Sleep 1
+Rq @("rep 3000") | Out-Null; Start-Sleep 1
 $rank1 = if ((Report) -match 'rank (\w+)') { $Matches[1] } else { "?" }
 Check "rank goes up with lifetime rep" ($rank1 -ne $rank0) "$rank0 -> $rank1"
 

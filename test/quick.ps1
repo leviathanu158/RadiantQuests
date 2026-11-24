@@ -4,8 +4,9 @@
 #   .\quick.ps1 -KeepOpen "report"
 #   .\quick.ps1 -NoStart "report"     (a game already started by this script or scenario.ps1)
 [CmdletBinding(PositionalBinding = $false)]
-param([string]$Save = "rqtest", [switch]$NoStart, [switch]$KeepOpen, [double]$WaitFirst = 0, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Commands)
+param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen, [double]$WaitFirst = 0, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Commands)
 $ErrorActionPreference = "Continue"
+if (-not $Save) { $Save = & (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "pick-save.ps1") -Name }
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
 $D = "C:\Kenshi_Meitou\ctl"
 $launcher = Get-Content (Join-Path $env:LOCALAPPDATA "Meitou\launcher.json") -Raw | ConvertFrom-Json

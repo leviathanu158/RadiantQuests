@@ -37,7 +37,14 @@ $rows = foreach ($save in Get-ChildItem (Join-Path $env:LOCALAPPDATA "Meitou\sav
         Score = - 10 * $missing.Count - $codeMissing.Count + $present.Count
     }
 }
-$sorted = @($rows | Sort-Object Score, @{ Expression = { $_.Save -notmatch '^(autosave|quicksave)' } }, Changed -Descending)
+# Best score first (current mods it names, less 10 per mod of its missing now). Saves within a quarter of the best count as equally good,
+# and among those a named save goes before an autosave (a test needs a known starting place; an autosave often names more mod records
+# only because more of the world was seen).
+$best = ($rows | Measure-Object Score -Maximum).Maximum
+$near = [Math]::Max(5, [Math]::Abs($best) * 0.25)
+$sorted = @($rows | Sort-Object @{ Expression = { $_.Score -ge $best - $near }; Descending = $true },
+    @{ Expression = { $_.Save -notmatch '^(autosave|quicksave)' }; Descending = $true }, @{ Expression = 'Score'; Descending = $true },
+    @{ Expression = 'Changed'; Descending = $true })
 if ($Name) { $sorted[0].Save; exit }
 "current data mods: $($wanted.Count) (mods.cfg)"
 $sorted | Select-Object -First $Top | Format-Table Save, Score, Missing, Matching, DataMods, CodeMissing, Changed -AutoSize | Out-String -Width 200

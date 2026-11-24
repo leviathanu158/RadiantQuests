@@ -124,6 +124,9 @@ public sealed partial class GuildSystem
     {
         var offers = new List<Offer>();
         var byRank = pools.Select(p => p.Where(c => !banned.Contains(KeyOf(c.Offer))).ToList()).ToArray();
+        // A faction's own work starts at the rank it opens at (his rule, 2026-11-24: C; E and D work is the guild's General work).
+        int floor = tab == Tab.Faction ? Math.Clamp(_set.FactionFromRank, 0, Ranks.Top) : 0;
+        for (int b = 0; b < floor; b++) byRank[b] = [];
         // Each rank (his rules, 2026-11-23): a cap of 5..7 (setting). Every target really around ALWAYS goes up first, to the cap. Then the
         // slots left may get new kinds of enemy brought in (spawned at accept; local kinds, each now and then one from outside the region:
         // setting), each slot by its own roll. A high rank you have reached with nothing real around gets brought-in work only rarely (A
@@ -162,11 +165,11 @@ public sealed partial class GuildSystem
                 + $"brought in {have - before} (minimum {must}, local {local.Count}, other regions {stray.Count})");
         }
         // Always something you can take at your own rank, when anything around (or local) can make it.
-        int own = Math.Min(myRank, Ranks.Top);
+        int own = Math.Clamp(myRank, floor, Ranks.Top);
         if (!offers.Any(o => o.Rank == own)) Pick([.. byRank[own].Where(c => !c.Offer.Stray)], used, offers, dice);
         // If nothing makes one at your rank either, the nearest rank below that can (always takeable, full pay) stands in.
         if (!offers.Any(o => o.Rank <= own))
-            for (int b = own - 1; b >= 0; b--)
+            for (int b = own - 1; b >= floor; b--)
                 if (Pick([.. byRank[b].Where(c => !c.Offer.Stray)], used, offers, dice)) break;
         // A Faction tab whose town's enemies around are all too strong for you: the town also wants its pests and outlaws dealt with, so the
         // General kinds of work (at your rank or below) are posted as its own work.
@@ -174,7 +177,7 @@ public sealed partial class GuildSystem
         {
             var local = new BoardContext(world, this, survey, Tab.General, giver, giverId, dice);
             var generalTypes = QuestTypes.All.Where(t => t.Offered(_set, Tab.General)).ToList();
-            for (int b = own; b >= 0; b--)
+            for (int b = own; b >= floor; b--)
             {
                 var pool = new List<Candidate>();
                 foreach (var type in generalTypes)
@@ -292,8 +295,12 @@ public sealed partial class GuildSystem
         if (pool.Count == 0) return false;
         // At most one loner per tab (his rule, 2026-11-23).
         bool lonerUp = offers.Any(IsLoner);
+        // One brought-in fight per enemy per rank (his report, 2026-11-24: "Defeat 2 Cannibals", "Wipe out a group of 3 Cannibals" and a
+        // Cannibal Loner all at E): an enemy that already has a job at a rank gets no brought-in one there. Real groups are exempt (two
+        // different real groups of one enemy are fine, his rule 2026-11-23).
         var from = pool.Where(c => !used.Contains(KeyOf(c.Offer)) && !(c.Offer.PlatoonKey != 0 && used.Contains(GroupKeyOf(c.Offer)))
-            && !(lonerUp && IsLoner(c.Offer))).ToList();
+            && !(lonerUp && IsLoner(c.Offer))
+            && !(c.Offer.PlatoonKey == 0 && FightKeyOf(c.Offer) is { } fight && used.Contains(fight))).ToList();
         // Each kind of quest gets a fair turn (a town with thirty kinds of animal around still shows its camps and groups): a kind first,
         // evenly among those with something to offer, then one of its offers by weight.
         var kinds = from.Select(c => c.Offer.Kind).Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
@@ -305,9 +312,13 @@ public sealed partial class GuildSystem
         var o = within[i].Offer;
         used.Add(KeyOf(o));
         if (o.PlatoonKey != 0) used.Add(GroupKeyOf(o));
+        if (FightKeyOf(o) is { } fightKey) used.Add(fightKey);
         offers.Add(Clone(o));
         return true;
     }
+
+    /// <summary>The enemy and rank of a fight (hunt, defeat, wipe-out, loner alike), or null for other work.</summary>
+    static string? FightKeyOf(Offer o) => o.Kind is Catalog.Hunt or Catalog.Cull or GroupQuest.KindId ? $"fight:{o.Rank}:{o.TargetId}" : null;
 
     /// <summary>A "Defeat a ... Loner" offer: one person alone.</summary>
     static bool IsLoner(Offer o) => o.Kind == Catalog.Cull && o.Need == 1 && o.GroupSize == 1;
