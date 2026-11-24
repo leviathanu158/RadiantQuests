@@ -66,9 +66,10 @@ Rq @("open $idx") | Out-Null
 Start-Sleep 1
 $board = GeneralPart (Report)
 $offers = [regex]::Matches($board, '\[(\d+)\] (\w+) ([^|]+?) (\d+)c (\d+)r( taken)?( locked)?')
-$atE = @($offers | Where-Object { $_.Groups[2].Value -eq 'E' -and $_.Groups[3].Value -notlike 'Wipe out*' })
-$dd = @($offers | Where-Object { $_.Groups[2].Value -eq 'D' -and $_.Groups[3].Value -notlike 'Wipe out*' })
-Check "board made while paused, E and D each have 2-5 quests" ($atE.Count -ge 2 -and $atE.Count -le 5 -and $dd.Count -ge 2 -and $dd.Count -le 5) "$($offers.Count) offers, $($atE.Count) at E, $($dd.Count) at D"
+# His board rules (2026-11-23): a rank you have reached shows its minimum (E: 3) up to the cap (5-7); ranks above yours are rolls.
+$atE = @($offers | Where-Object { $_.Groups[2].Value -eq 'E' })
+$dd = @($offers | Where-Object { $_.Groups[2].Value -eq 'D' })
+Check "board made while paused, E (your rank) has its minimum of 3, at most 7" ($atE.Count -ge 3 -and $atE.Count -le 7) "$($offers.Count) offers, $($atE.Count) at E, $($dd.Count) at D"
 # His rule (2026-11-23): the same quest never twice - a target once per rank and quest kind (E and D of the same target is fine), each real
 # group or camp once (different groups of the same enemy are fine).
 $keys = @($offers | Where-Object { $_.Groups[3].Value -notlike 'Wipe out*' -and $_.Groups[3].Value -notlike 'Clear *' } |
@@ -156,7 +157,7 @@ if ($g) {
 
 # 5d. Clear the lair: an existing camp/nest near town; finishing it pays
 $all = Report
-$lm = [regex]::Matches($all, '\[(\d+)\] (\w+) (Clear [^|]+?) (\d+)c (\d+)r(?! taken)(?! locked)') | Select-Object -First 1
+$lm = [regex]::Matches($all, '\[(\d+)\] (\w+) (Clear [^|;]+?) (\d+)c (\d+)r([^|;]*)') | Where-Object { $_.Groups[6].Value -notmatch 'taken|locked' } | Select-Object -First 1
 Check "lair quests offered$(if (-not $lm) { ' (info: no lair within reach of this town today)' })" $true $(if ($lm) { $lm.Groups[3].Value } else { "" })
 if ($lm) {
     $lf = $all.IndexOf('; faction board: ') -ge 0 -and $all.IndexOf($lm.Value) -gt $all.IndexOf('; faction board: ')

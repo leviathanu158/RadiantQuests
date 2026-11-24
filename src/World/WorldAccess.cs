@@ -13,8 +13,12 @@ namespace RadiantQuests;
 /// <summary>One roaming group (a platoon) as the mod sees it.</summary>
 /// <param name="Standing">Members able to fight now: for a loaded group, those alive, not down, not carried and not locked up; for one off screen,
 /// its size.</param>
+/// <param name="Age">The mean age of its standing animals (Kenshi's age is their stat multiplier: under 0.4 a pup, up to 1.1 adult, above that
+/// an elder); 1 when it has none or isn't loaded.</param>
+/// <param name="Strength">What their ages do to their fighter strength: the square root of the mean of age^1.5, so a fight's score (strength
+/// squared) is the SUM of each animal's age^1.5 share - adding a pup never makes a herd easier; 1 as above.</param>
 public sealed record GroupInfo(int Id, ulong Key, string TemplateId, int Faction, string? FactionId, Vector2 At, int Size, int Standing, string Tag,
-    bool ModSpawned);
+    bool ModSpawned, float Age = 1, float Strength = 1);
 
 /// <summary>What the mod needs to know about one person.</summary>
 public readonly record struct PersonFacts(CharacterId Id, ulong Lasting, int Faction, string Record, bool Down, bool Taken, string? GroupTag,
@@ -30,7 +34,7 @@ public readonly record struct CampPerson(ulong Id, bool Standing, float FromCamp
 public sealed class WorldAccess(PopulationData data, PopulationSystem? population)
 {
     /// <summary>The areas, each switched off on its first failure.</summary>
-    public enum Area { Groups, Spawning, People, Regions, Relations }
+    public enum Area { Groups, Spawning, People, Regions, Relations, Ground }
 
     static readonly HashSet<Area> s_off = [];
 
@@ -80,16 +84,29 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
             if (p.Dead) continue;
             int standing = Math.Max(1, p.Size);
             var at = p.Position;
+            float ages = 0, strength = 0;
+            int animals = 0;
             if (p.SquadId >= 0 && world.Squads.Find(p.SquadId) is { } squad)
             {
                 standing = 0;
                 foreach (var m in squad.Members)
-                    if (Person(world, m) is { Down: false, Taken: false }) standing++;
+                {
+                    if (Person(world, m) is not { Down: false, Taken: false }) continue;
+                    standing++;
+                    if (AgeOf(world, m) is { } age)
+                    {
+                        animals++;
+                        ages += age;
+                        // Each animal's share of the fight (the score goes with strength squared): age^1.5 (his Garru report, 2026-11-24: the
+                        // mean of age^1.5, squared, let two pups pull two adults down a rank; a young adult still bites hard).
+                        strength += MathF.Pow(Math.Max(0, age), 1.5f);
+                    }
+                }
                 if (world.Characters.TryResolveNext(squad.Leader, out int slot))
                     at = new Vector2(world.Characters.Next[slot].Position.X, world.Characters.Next[slot].Position.Z);
             }
             list.Add(new GroupInfo(p.Id, p.Key, p.TemplateId, p.Faction, p.Faction >= 0 ? data.FactionId(p.Faction) : null, at, Math.Max(1, p.Size),
-                standing, p.ModTag, p.ModSpawned));
+                standing, p.ModTag, p.ModSpawned, animals > 0 ? ages / animals : 1, animals > 0 ? MathF.Sqrt(strength / animals) : 1));
         }
         return list;
     });
@@ -186,16 +203,146 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
     public int SpawnFaction(string template) => Guard(Area.Spawning, -1, () =>
         data.Db.Find(template) is { Type: FcsRecordType.SquadTemplate } rec ? data.SpawnFactionOf(SquadTemplate.From(rec)) : -1);
 
-    /// <summary>Spawns one ordinary group of <paramref name="template"/> at <paramref name="at"/>, tagged; returns its size (0: not spawned).</summary>
-    public int Spawn(World world, int faction, string template, int homeSite, Vector2 at, string tag) => Guard(Area.Spawning, 0, () =>
+    /// <summary>
+    /// Spawns one ordinary group of <paramref name="template"/> at <paramref name="at"/>, tagged; returns its size (0: not spawned). With
+    /// <paramref name="most"/> &gt; 0 and a Meitou that has the size cap (its SpawnPlatoon's maxMembers, merged 2026-11-24), the group holds at
+    /// most that many; an older Meitou spawns the group whole (the quest then fits its count to the group).
+    /// </summary>
+    public (int Size, ulong Key) Spawn(World world, int faction, string template, int homeSite, Vector2 at, string tag, int most = 0) =>
+        Guard(Area.Spawning, (0, 0UL), () =>
     {
-        if (population is null || homeSite < 0) return 0;
-        int id = population.SpawnPlatoon(world, faction, template, homeSite, at, 0, 1500);
-        if (id < 0 || world.Platoons.Find(id) is not { } p) return 0;
+        if (population is null || homeSite < 0) return (0, 0UL);
+        // A tight ring round the spot the mod checked (GoodSpot): the group stands where it was judged dry, open and reachable.
+        int id = most > 0 && CapSpawn is { } capped
+            ? (int)capped.Invoke(population, [world, faction, template, homeSite, at, 0f, SpawnSpread, 0L, most])!
+            : population.SpawnPlatoon(world, faction, template, homeSite, at, 0, SpawnSpread);
+        if (id < 0 || world.Platoons.Find(id) is not { } p) return (0, 0UL);
         p.ModTag = tag;
         Changed();
-        return Math.Max(1, p.Size);
+        return (Math.Max(1, p.Size), p.Key);
     });
+
+    /// <summary>How far from the checked spot the game may place the group (units).</summary>
+    const float SpawnSpread = 120;
+
+    /// <summary>
+    /// Whether a group can be put at <paramref name="at"/> (his rules, 2026-11-23): walkable; dry ground, at the spot and all round it (no
+    /// water, no island or shore); not steep; and an unbroken walkable surface from it toward <paramref name="toward"/> (the town you come from),
+    /// so it can be reached and fought, not stuck on a cliff top or in a closed-off pocket. Cheap: ground heights and Meitou's navmesh straight
+    /// line test, the one fights use every tick (a route search may not run inside a tick, Meitou's rule). Null when good, else why not.
+    /// </summary>
+    public string? SpotProblem(World world, Vector2 at, Vector2 toward) => Guard<string?>(Area.Ground, null, () =>
+    {
+        var w = world.Walkability;
+        if (!w.IsWalkable(at.X, at.Y)) return "not walkable";
+        const float dry = Meitou.Data.World.WorldWater.Height + 3;
+        float h0 = w.TerrainHeight(at.X, at.Y);
+        if (h0 <= dry) return "water";
+        float lo = h0, hi = h0;
+        for (int k = 0; k < 8; k++)
+        {
+            float a = k * MathF.PI / 4;
+            float h = w.TerrainHeight(at.X + MathF.Cos(a) * SpotReach, at.Y + MathF.Sin(a) * SpotReach);
+            if (h <= dry) return "water near";
+            lo = MathF.Min(lo, h);
+            hi = MathF.Max(hi, h);
+        }
+        if (hi - lo > SteepRise) return "steep";
+        var dir = toward - at;
+        if (dir.LengthSquared() > 1)
+        {
+            var to = at + Vector2.Normalize(dir) * MathF.Min(ReachTest, dir.Length());
+            if (!w.IsWalkable(to.X, to.Y)) return "cut off";
+            if (!w.LineOfSight(new Vector3(at.X, w.GroundHeight(at.X, at.Y), at.Y), new Vector3(to.X, w.GroundHeight(to.X, to.Y), to.Y))) return "cut off";
+        }
+        return null;
+    });
+
+    /// <summary>How far round a spot the ground must be dry and not steep, the most it may rise within that, and how far toward the town the
+    /// surface must run unbroken (units; mod choices).</summary>
+    const float SpotReach = 150, SteepRise = 110, ReachTest = 800;
+
+    static System.Reflection.MethodInfo? s_capSpawn;
+    static bool s_capLooked;
+
+    /// <summary>Meitou's SpawnPlatoon with a member cap (9 parameters: ..., long money, int maxMembers), or null in a Meitou that hasn't got it.</summary>
+    static System.Reflection.MethodInfo? CapSpawn
+    {
+        get
+        {
+            if (s_capLooked) return s_capSpawn;
+            s_capLooked = true;
+            s_capSpawn = typeof(PopulationSystem).GetMethods().FirstOrDefault(m => m.Name == "SpawnPlatoon" && m.GetParameters() is { Length: 9 } ps
+                && ps[^1].ParameterType == typeof(int) && ps[^2].ParameterType == typeof(long) && ps[0].ParameterType == typeof(World));
+            RadiantQuestsMod.Log(s_capSpawn is null
+                ? "group size cap: not in this Meitou yet (brought-in groups come whole; quests fit their count to them)"
+                : "group size cap: on (brought-in groups are spawned at the size the quest asks for)");
+            return s_capSpawn;
+        }
+    }
+
+    /// <summary>Whether this Meitou can spawn a group capped to a size.</summary>
+    public static bool CanCap => CapSpawn is not null;
+
+    /// <summary>
+    /// The age of <paramref name="c"/> if it is an animal (its stat multiplier), else null. Read only.
+    /// </summary>
+    public static float? AgeOf(World world, CharacterId c) =>
+        world.Characters.TryResolveNext(c, out int s) && world.Characters.Cold(s) is { Animal: not null } cold ? cold.Age : null;
+
+    /// <summary>
+    /// Sets every animal of group <paramref name="platoonId"/> to <paramref name="age"/> through the game's own growth path (stats and body size
+    /// follow). Returns how many were set; 0 when the group isn't loaded.
+    /// </summary>
+    public int SetAges(World world, int platoonId, float age) => Guard(Area.Spawning, 0, () =>
+    {
+        if (world.Platoons.Find(platoonId) is not { } p || p.SquadId < 0 || world.Squads.Find(p.SquadId) is not { } squad) return 0;
+        int n = 0;
+        foreach (var m in squad.Members)
+            if (world.Characters.TryResolveNext(m, out int s) && world.Characters.Cold(s) is { Animal: not null } cold
+                && Meitou.Simulation.Bodies.BodySystem.SetAnimalAge(cold, age, refreshLook: true)) n++;
+        return n;
+    });
+
+    /// <summary>
+    /// What is wrong with a freshly brought-in, loaded group (null: nothing): none of its people in the world, most of them missing, or one
+    /// under the ground or high in the air. Read only.
+    /// </summary>
+    public string? GroupProblem(World world, int platoonId) => Guard<string?>(Area.Ground, null, () =>
+    {
+        if (world.Platoons.Find(platoonId) is not { } p || p.SquadId < 0 || world.Squads.Find(p.SquadId) is not { } squad) return null;
+        var table = world.Characters;
+        var w = world.Walkability;
+        int there = 0;
+        foreach (var m in squad.Members)
+        {
+            if (!table.TryResolveNext(m, out int s)) continue;
+            there++;
+            var at = table.Next[s].Position;
+            float ground = w.TerrainHeight(at.X, at.Z);
+            if (at.Y < ground - 30) return "a member is under the ground";
+            if (at.Y > w.GroundHeight(at.X, at.Z) + 200) return "a member is high in the air";
+        }
+        if (there == 0) return "none of its members is in the world";
+        if (p.Size > 0 && there * 2 < p.Size) return $"only {there} of {p.Size} members are in the world";
+        return null;
+    });
+
+    /// <summary>Test channel: sets group <paramref name="platoonId"/>'s animals to <paramref name="ages"/> in order (the last repeats); how many.</summary>
+    public int SetAgesEach(World world, int platoonId, IReadOnlyList<float> ages) => Guard(Area.Spawning, 0, () =>
+    {
+        if (ages.Count == 0 || world.Platoons.Find(platoonId) is not { } p || p.SquadId < 0 || world.Squads.Find(p.SquadId) is not { } squad) return 0;
+        int n = 0;
+        foreach (var m in squad.Members)
+            if (world.Characters.TryResolveNext(m, out int s) && world.Characters.Cold(s) is { Animal: not null } cold
+                && Meitou.Simulation.Bodies.BodySystem.SetAnimalAge(cold, ages[Math.Min(n, ages.Count - 1)], refreshLook: true)) n++;
+        Changed();
+        return n;
+    });
+
+    /// <summary>Whether group <paramref name="platoonId"/>'s members are in the world now (loaded), so their ages can be read.</summary>
+    public bool Loaded(World world, int platoonId) => Guard(Area.Groups, false, () =>
+        world.Platoons.Find(platoonId) is { SquadId: >= 0 } p && world.Squads.Find(p.SquadId) is { Members.Count: > 0 });
 
     #endregion
 

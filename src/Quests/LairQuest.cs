@@ -46,7 +46,7 @@ public sealed class LairQuest : IQuestType
         }
     }
 
-    static double Score(Lair lair) => Catalog.Fight(lair.Unit, lair.Residents);
+    static double Score(Lair lair) => lair.Score;
 
     /// <summary>A camp's rank: everyone living there.</summary>
     public static int Rank(Lair lair) => Difficulty.RankOf(Score(lair));
@@ -114,7 +114,8 @@ public sealed class LairQuest : IQuestType
         // Stragglers: you are at the camp, most are down, and none of those left has come near you for a while.
         bool youThere = yours.Any(d => d <= area);
         if (!youThere || needed.Any(p => p.FromYou <= reach) || q.LastContact < 0) q.LastContact = world.GameHours;
-        bool most = q.Have >= Math.Ceiling(q.Need * guild.Settings.GroupShare);
+        // (A failsafe for stuck or hidden stragglers, not a margin: the camp is cleared by who is left; three in four down is "most".)
+        bool most = q.Have >= Math.Ceiling(q.Need * 0.75);
         return most && world.GameHours - q.LastContact >= guild.Settings.StragglerHours;
     }
 

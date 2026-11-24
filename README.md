@@ -1,4 +1,4 @@
-# Radiant Quests for Meitou (v0.7.11)
+# Radiant Quests for Meitou (v0.8.12)
 
 Repeatable guild quests for Kenshi on Meitou (the open-source Kenshi engine). Take work from a faction's bartender, do it, and get paid in cats
 and guild rep. Guild rep raises your guild rank from E to SS, which opens harder, better-paid work.
@@ -6,7 +6,7 @@ and guild rep. Guild rep raises your guild rank from E to SS, which opens harder
 Built from your load order: the factions, animals and people of UWE, Kaizo or any other mod take part with no patch needed. The full design is
 in DESIGN.md.
 
-## What works in 0.7.11
+## What works in 0.8.12
 
 - **Adventurers' Guild:** right click the bartender of any town owned by a guild faction and choose *Adventurers' Guild*, whoever runs
   the bar (in many towns the Trade Ninjas do). Faction work is for the town's owner, checked live (0.6.2).

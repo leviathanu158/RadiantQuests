@@ -1,13 +1,17 @@
 // Radiant Quests for Meitou. GPLv3 or later.
 // The fighting quest types: "Hunt N <animal>", "Defeat N <faction>" (any group counts) and "Wipe out a group" (one real group).
 //
-// Reliability rules shared by them:
-//   - only targets that live around the town are offered (standing there now, or naturally spawning in its regions);
-//   - a count never asks for more than is really there: with a margin (default 25%) so not every last one must be found;
-//   - when taken, if too few are standing, more ordinary groups are spawned in the town's own regions (never uniques), else the count drops;
-//   - while running, if the marked groups can't cover what's still needed: other real ones are marked, a shortfall within the margin is
-//     forgiven, a top-up spawn that fits what is missing is tried, else the count drops to what can be done; targets someone else beat
-//     (seen, not guessed) are not paid for (Quest.PayShare); nothing done and nothing left: called off, no penalty.
+// Reliability rules shared by them (his rules, 2026-11-23):
+//   - a hunt or defeat is about ONE whole group: a real one around the town (tagged when taken, so it stays marked wherever it wanders), or
+//     one the mod brings in when taken. The count is the WHOLE group (his rule, 2026-11-23: no grace margin any more; the failsafes below
+//     cover lost targets), so you never arrive to find twice what the board said; at most 15 (bigger crowds are "wipe out the group" work);
+//   - its difficulty is the whole group you face, with the animals' real ages (pups are weaker, elders stronger);
+//   - a brought-in group is spawned at the planned size where Meitou can cap it; where it can't and the group comes out bigger, the count
+//     and the pay follow the real group (and a group past the rank is passed over for another first);
+//   - brought-in animals get adult ages if their real ages would put the quest at another rank;
+//   - while running, if the marked groups can't cover what's still needed: a top-up group that fits what is missing is tried first, else
+//     the count drops to what can be done (full pay); nothing done and nothing left: called off, no penalty. Targets someone
+//     else beat (seen, not guessed) are not paid for (Quest.PayShare).
 using System.Numerics;
 using Meitou.Simulation;
 
@@ -25,70 +29,99 @@ public abstract class CountQuest : IQuestType
 
     protected static Catalog Cat => RadiantQuestsMod.Catalog;
 
+    /// <summary>How near one of yours a group of the target must be to be marked and counted, outside the quest area (you followed them).</summary>
+    const float NearYou = 2500;
+
     public IEnumerable<Candidate> Candidates(BoardContext ctx, int rank)
     {
         var set = ctx.Guild.Settings;
         foreach (var t in Targets(ctx))
         {
-            int standing = ctx.Survey.StandingOf(t);
-            bool spawns = set.SpawnTargets && ctx.Survey.SpawnsHere(Cat, t);
-            bool stray = !spawns && standing == 0 && set.SpawnTargets && set.StrayChance > 0 && Survey.SpawnsAnywhere(Cat, t);
-            if (standing == 0 && !spawns && !stray) continue;   // nothing of it around this town (and it can't be brought in)
-            // Counts the ones really around can fill (with the margin) come first; only if none fits this rank, counts that a group the mod
-            // can bring in really holds: a group of N asks for N less the margin (a pack of 6 antelope: 5), never a part of a bigger group.
-            var counts = CountsFor(t, rank, Math.Min(12, Usable(standing, set)));
-            bool present = counts.Count > 0;
-            if (!present && (spawns || stray)) counts = GroupCounts(t, rank, spawns ? ctx.Survey.LocalTemplates(Cat, t) : Survey.AnyTemplates(Cat, t), set);
-            if (counts.Count == 0) continue;
-            // The smaller counts: a long list of the same thing is tedious, and a strong target reaches the rank with few.
-            int need = counts[ctx.Dice.Int(0, Math.Min(1, counts.Count - 1))];
-            var offer = new Offer { Kind = Kind, TargetId = t.Id, TargetName = t.Name.Trim(), Rank = rank, Need = need,
-                Score = Catalog.QuestScore(Unit(t), need, Typical(t)), Stray = !present && !spawns };
-            // Where the nearest of them stand (a quest that brings its targets in has no place yet).
-            if (present)
+            var key = Survey.Key(t.Kind, t.Id);
+            double unit = Unit(t);
+            // A real group around the town that makes this rank, whole (nearest first).
+            GroupInfo? real = null;
+            double realScore = 0;
+            foreach (var g in ctx.Survey.Groups)
             {
-                var key = Survey.Key(t.Kind, t.Id);
-                if (ctx.Survey.Groups.FirstOrDefault(g => g.Standing > 0 && Survey.KeysOf(Cat, g).Contains(key)) is { } nearest) offer.SetAt(nearest.At);
+                if (g.Standing <= 0 || g.Standing > Catalog.MostCount || g.Tag.Length > 0 || g.ModSpawned || !Survey.KeysOf(Cat, g).Contains(key)) continue;
+                double score = Catalog.Fight(unit * Strength(t, g), g.Standing);
+                if (Difficulty.RankOf(score) != rank) continue;
+                real = g;
+                realScore = score;
+                break;
             }
-            yield return new Candidate(offer, present ? 3 : 1, present);
+            if (real is not null)
+            {
+                var offer = new Offer { Kind = Kind, TargetId = t.Id, TargetName = t.Name.Trim(), Rank = rank, Need = Keep(real.Standing, set),
+                    GroupSize = real.Standing, PlatoonKey = real.Key, Score = realScore, Age = t.Kind == Catalog.Hunt ? real.Age : 1 };
+                offer.SetAt(real.At);
+                yield return new Candidate(offer, 3, true);
+                continue;
+            }
+            // Else a group the mod can bring in when the quest is taken (from the town's regions; now and then from anywhere).
+            bool spawns = set.SpawnTargets && ctx.Survey.SpawnsHere(Cat, t);
+            bool stray = !spawns && ctx.Survey.StandingOf(t) == 0 && set.SpawnTargets && set.StrayChance > 0 && Survey.SpawnsAnywhere(Cat, t);
+            if (!spawns && !stray) continue;
+            var templates = spawns ? ctx.Survey.LocalTemplates(Cat, t) : Survey.AnyTemplates(Cat, t);
+            var sizes = BroughtSizes(t, unit, rank, templates, 1, Catalog.MostCount);
+            // Strays (his idea, 2026-11-23): at E and D, a few animals wandered off from a pack (2-4, smaller than any whole pack of theirs),
+            // so pack animals too strong in a herd still give low-rank work. Needs Meitou's spawn cap (a part of a pack can't be made without it).
+            var strays = rank <= 1 && WorldAccess.CanCap ? StraySizes(t, unit, rank, templates).Except(sizes).ToList() : [];
+            if (sizes.Count + strays.Count == 0) continue;
+            // A random size among those that fit (his rule: lots of variety); rolled with the board, so a reload shows the same.
+            int pick = ctx.Dice.Int(0, sizes.Count + strays.Count - 1);
+            bool isStrays = pick >= sizes.Count;
+            int size = isStrays ? strays[pick - sizes.Count] : sizes[pick];
+            yield return new Candidate(new Offer { Kind = Kind, TargetId = t.Id, TargetName = t.Name.Trim(), Rank = rank,
+                Need = isStrays ? size : Keep(size, set), GroupSize = size, Score = Catalog.Fight(unit, size), Stray = !spawns, Strays = isStrays }, 1, false);
         }
     }
 
-    /// <summary>For a quest that brings its group in: per group <paramref name="t"/> can come in (its size N), the count N less the margin,
-    /// kept when that makes <paramref name="rank"/> (judged against that group's size).</summary>
-    static List<int> GroupCounts(Target t, int rank, List<string> templates, SettingsCopy set)
+    /// <summary>
+    /// The sizes (between <paramref name="min"/> and <paramref name="max"/>) a brought-in group of <paramref name="t"/> may come at that make
+    /// <paramref name="rank"/> (whole groups, adults): every size in any of its templates' spawn ranges (Catalog.SpawnRange).
+    /// </summary>
+    public static List<int> BroughtSizes(Target t, double unit, int rank, List<string> templates, int min, int max)
     {
-        var counts = new SortedSet<int>();
+        var sizes = new SortedSet<int>();
         foreach (var id in templates)
         {
-            // The count comes from the fewest the group can hold (whatever it rolls covers it, the margin kept); the difficulty from its
-            // usual size (the fight you face).
-            int least = Cat.TemplateMinSize.GetValueOrDefault(id, 0);
-            double size = Cat.TemplateSize.GetValueOrDefault(id, 0);
-            if (least < 1 || size < 1) continue;
-            int n = Math.Max(1, least - (int)Math.Floor(least * set.CountMargin));
-            if (Cat.QuestRank(t.Kind, Unit(t), n, size) == rank) counts.Add(n);
+            var (lo, hi) = Cat.SpawnRange(id, t.Kind == Catalog.Hunt);
+            for (int n = Math.Max(lo, min); n <= Math.Min(hi, max); n++)
+                if (Difficulty.RankOf(Catalog.Fight(unit, n)) == rank) sizes.Add(n);
         }
-        return [.. counts];
+        return [.. sizes];
     }
 
-    /// <summary>The counts of <paramref name="t"/> from 2 to <paramref name="cap"/> that make <paramref name="rank"/>; else a single one if that does
-    /// (a strong target past the rank even at two: so low ranks get work too).</summary>
-    static List<int> CountsFor(Target t, int rank, int cap)
+    /// <summary>
+    /// Stray sizes for a pack animal at <paramref name="rank"/>: 2 up to 4, below the smallest whole pack of that template (its spawn range's
+    /// low end), when the difficulty fits. Never for people or animals that live alone.
+    /// </summary>
+    static List<int> StraySizes(Target t, double unit, int rank, List<string> templates)
     {
-        var counts = new List<int>();
-        for (int n = 2; n <= cap; n++)
-            if (Cat.QuestRank(t.Kind, Unit(t), n, Typical(t)) == rank) counts.Add(n);
-        if (counts.Count == 0 && cap >= 1 && Cat.QuestRank(t.Kind, Unit(t), 1, Typical(t)) == rank) counts.Add(1);
-        return counts;
+        var sizes = new SortedSet<int>();
+        if (t.Kind != Catalog.Hunt) return [];
+        foreach (var id in templates)
+        {
+            if (Cat.TemplateSize.GetValueOrDefault(id, 0) <= 2) continue;
+            var (lo, _) = Cat.SpawnRange(id, true);
+            for (int n = 2; n <= Math.Min(4, lo - 1); n++)
+                if (Difficulty.RankOf(Catalog.Fight(unit, n)) == rank) sizes.Add(n);
+        }
+        return [.. sizes];
     }
 
-    static double Unit(Target t) => t.Kind == Catalog.Cull ? Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit) : t.Unit;
+    /// <summary>How many of a group of <paramref name="size"/> a quest asks for: all but the margin (25%: 6 asks for 5, 8 for 6), at least 1.</summary>
+    public static int Keep(int size, SettingsCopy set) => Math.Max(1, size);
 
-    static double Typical(Target t) => t.Kind == Catalog.Cull ? Cat.SizeOf.GetValueOrDefault(t.Id, 1) : Cat.PackOf.GetValueOrDefault(t.Id, 1);
+    /// <summary>A group's strength from its animals' ages (hunts); people are as the data says.</summary>
+    static double Strength(Target t, GroupInfo g) => t.Kind == Catalog.Hunt ? g.Strength : 1;
+
+    public static double Unit(Target t) => t.Kind == Catalog.Cull ? Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit) : t.Unit;
 
     /// <summary>How many of <paramref name="standing"/> a quest may ask for (the margin: not every last one must be found).</summary>
-    public static int Usable(int standing, SettingsCopy set) => (int)Math.Floor(standing * (1 - set.CountMargin));
+    public static int Usable(int standing, SettingsCopy set) => standing;
 
     protected static Target? TargetOf(Quest q) => Cat.FindTarget(q.Kind, q.TargetId);
 
@@ -96,25 +129,53 @@ public abstract class CountQuest : IQuestType
     {
         var set = guild.Settings;
         if (TargetOf(q) is not { } t) return false;
+        // A real group: tagged for the quest, so it stays marked wherever it wanders.
+        if (offer.PlatoonKey != 0 && guild.Access.TagGroup(world, offer.PlatoonKey, q.Tag)) return true;
         var survey = Survey.Of(world, guild.Access, Cat, at, set.TargetRange);
-        int usable = Usable(survey.StandingOf(t), set);
-        for (int i = 0; i < 4 && usable < q.Need && set.SpawnTargets; i++)
+        int planned = offer.GroupSize > 0 ? offer.GroupSize : q.Need;
+        // Bring a group in. One that came out bigger than the rank (a Meitou that can't cap a spawn) is passed over for another; the last try
+        // is kept as it is, its count and pay fitted to it.
+        for (int attempt = 0; attempt < 3 && set.SpawnTargets; attempt++)
         {
-            int added = guild.SpawnNear(world, q, t, survey);
-            if (added <= 0) break;
-            usable += added;
+            if (guild.SpawnNear(world, q, t, survey, want: planned) is not { } g) break;
+            if (g.Size == planned) return true;
+            double score = Catalog.Fight(Unit(t), g.Size);
+            if (Difficulty.RankOf(score) > q.Rank && attempt < 2)
+            {
+                q.Skipped.Add(g.Key);   // not needed: cleared away once you are not near
+                RadiantQuestsMod.Detail($"quest #{q.Id}: brought-in group of {g.Size} is past rank {Ranks.Name(q.Rank)}, trying another");
+                continue;
+            }
+            Refit(q, g.Size, score, set);
+            RadiantQuestsMod.Toast($"The group is {g.Size} strong: the quest asks for {q.Need}, pay {q.Cats} cats.");
+            return true;
         }
-        if (usable <= 0)
+        // Nothing could be brought in: the real ones around, if any.
+        int usable = Keep(survey.StandingOf(t), set);
+        if (survey.StandingOf(t) <= 0)
         {
             RadiantQuestsMod.Toast($"No {q.TargetName} are around any more. Pick another quest.");
             return false;
         }
         if (usable < q.Need)
         {
-            RadiantQuestsMod.Toast($"Only {usable} {q.TargetName} could be found near enough: the quest asks for {usable}.");
-            q.Need = usable;
+            RadiantQuestsMod.Toast($"Only {survey.StandingOf(t)} {q.TargetName} are near: the quest asks for {usable}.");
+            Refit(q, survey.StandingOf(t), Catalog.Fight(Unit(t), survey.StandingOf(t)), set);
         }
         return true;
+    }
+
+    /// <summary>Fits a quest to a group of <paramref name="size"/> (score <paramref name="score"/>): its count, and the pay by the change in difficulty.</summary>
+    static void Refit(Quest q, int size, double score, SettingsCopy set)
+    {
+        if (q.Score > 0 && score > 0)
+        {
+            q.Cats = (long)Math.Round(q.Cats * Difficulty.CatsAt(score, q.Rank) / Difficulty.CatsAt(q.Score, q.Rank) / 10) * 10;
+            q.Rep = (int)Math.Round(q.Rep * Difficulty.RepAt(score, q.Rank) / Difficulty.RepAt(q.Score, q.Rank));
+        }
+        q.Need = q.Strays ? size : Keep(size, set);
+        q.GroupSize = size;
+        q.Score = score;
     }
 
     public bool Counts(Quest q, PersonFacts person, string race, string familyHead) =>
@@ -125,20 +186,36 @@ public abstract class CountQuest : IQuestType
         var set = guild.Settings;
         var anchor = new Vector2(q.AnchorX, q.AnchorZ);
         var key = Survey.Key(Kind, q.TargetId);
-        // The quest's groups: its own (tagged) ones, and groups of its target within the quest area (nearest first).
+        // The quest's groups: its own (tagged) ones wherever they are, and groups of its target within the quest area or near one of yours
+        // (you followed them out; any of them counts), nearest the area first.
         var groups = guild.Access.Groups(world)
-            .Where(g => g.Tag == q.Tag || (Vector2.Distance(g.At, anchor) <= set.TargetRange && Survey.KeysOf(Cat, g).Contains(key)))
-            .OrderBy(g => Vector2.Distance(g.At, anchor))
+            .Where(g => g.Tag == q.Tag || (g.Tag.Length == 0 && Survey.KeysOf(Cat, g).Contains(key)
+                && (Vector2.Distance(g.At, anchor) <= set.TargetRange || guild.Access.YoursNearPoint(world, g.At, NearYou))))
+            .OrderBy(g => g.Tag == q.Tag ? 0 : 1)
+            .ThenBy(g => Vector2.Distance(g.At, anchor))
             .ThenBy(g => g.Id)
             .ToList();
         var marked = groups.Where(g => g.Standing > 0 && !q.Skipped.Contains(g.Key)).ToList();
         int standing = marked.Sum(g => g.Standing);
-        markers.AddRange(marked.Take(5).Select(g => g.At));
+        // The map shows the quest's own group; other groups of the kind (any of them counts) only when its own can't cover what is still
+        // needed, so a loner quest isn't five markers (his worry, 2026-11-23: clutter).
+        var own = marked.Where(g => g.Tag == q.Tag).ToList();
+        markers.AddRange((own.Sum(g => g.Standing) >= q.Need - q.Have && own.Count > 0 ? own : marked).Take(5).Select(g => g.At));
 
         // Knocked out by someone else (down, with no blow of yours): seen on the quest's groups that are loaded.
         foreach (var g in groups)
             foreach (var m in guild.Access.Members(world, g.Id))
                 if (m.Down) guild.LostToOthers(world, m);
+
+        // Brought-in animals whose ages would put the quest at another rank are made adults (the rank was set for adults), once per group.
+        if (Kind == Catalog.Hunt && TargetOf(q) is { } target)
+            foreach (var g in groups.Where(g => g.Tag == q.Tag && g.ModSpawned && !q.Aged.Contains(g.Key) && guild.Access.Loaded(world, g.Id)))
+            {
+                q.Aged.Add(g.Key);
+                if (Difficulty.RankOf(Catalog.Fight(target.Unit * g.Strength, g.Standing)) == Difficulty.RankOf(Catalog.Fight(target.Unit, g.Standing))) continue;
+                int set1 = guild.Access.SetAges(world, g.Id, 1f);
+                RadiantQuestsMod.Detail($"quest #{q.Id}: brought-in {g.TemplateId} (mean age {g.Age:0.00}) made adult ({set1} animals)");
+            }
 
         // Failsafe: targets you stay near but can never reach (water, cliffs, stuck) are given up on; refills or the end below take over.
         if (q.Have < q.Need)
@@ -148,40 +225,48 @@ public abstract class CountQuest : IQuestType
                 standing -= lost.Standing;
                 markers.Remove(lost.At);
                 q.LastRefill = -1;   // look for others at once
-                RadiantQuestsMod.Toast($"{q.Describe()}: those {q.TargetName} can't be reached. Others will be marked if any are around.");
+                RadiantQuestsMod.Toast($"Those {q.TargetName} can't be reached. Others will be marked if any are around.");
             }
         }
         int still = q.Need - q.Have;
         // Its brought-in group was beaten by someone else before you fought: called off, no penalty (the group is cleared up later).
-        if (q.Spawned && q.Have == 0 && !groups.Any(g => g.Tag == q.Tag && g.Standing > 0))
+        // (A group given up on - broken or out of reach - is not "beaten": the shortfall below brings a replacement.)
+        if (q.Spawned && q.Have == 0 && groups.Any(g => g.Tag == q.Tag && g.Standing == 0 && !q.Skipped.Contains(g.Key))
+            && !groups.Any(g => g.Tag == q.Tag && g.Standing > 0 && !q.Skipped.Contains(g.Key)))
         {
-            RadiantQuestsMod.Toast($"The {q.TargetName} for \"{q.Describe()}\" were beaten by someone else before you got there.");
+            RadiantQuestsMod.Toast($"Someone else beat the {q.TargetName} before you got there.");
             return TrackResult.CallOff;
         }
         if (still <= 0 || standing >= still) return TrackResult.Going;
 
         // The quest can't be finished with what is around (his rules, 2026-11-23). In order:
         //   1. other real targets nearby are already marked and counted in "standing" above;
-        //   2. close enough: what can't be found is within the margin (25% of the count, at least 1): the count drops to what there is,
-        //      full reward;
-        //   3. a top-up spawn, only with a group that FITS what is missing (no bigger than the shortfall, +1 for E and D; so never
-        //      harder than the part that is missing), a few times, at most once a game hour;
-        //   4. nothing fits: the count drops to what you did plus what is still around; nothing done and nothing around: called off,
-        //      no penalty. (The pay leaves out only targets someone else beat: Quest.PayShare.)
+        //   2. a top-up group that FITS what is missing (no bigger than the shortfall, +1 for E and D; so never harder than the part that is
+        //      missing), a few times, at most once a game hour;
+        //   3. nothing could come: the count drops to what you did plus what is still around, full pay; nothing done and nothing around:
+        //      called off, no penalty. (The pay leaves out only targets someone else beat.)
         // Never in the middle of a fight: those just knocked down are counted a moment later.
         if (guild.Fighting(world, q)) return TrackResult.Going;
         int missing = still - standing;
-        int grace = Math.Max(1, (int)Math.Floor(q.Need * set.CountMargin));
-        if (missing <= grace) return Shorten(q, standing, $"{missing} {q.TargetName} can't be found; that's close enough");
-        if (set.SpawnTargets && q.Refills < 4 && TargetOf(q) is { } t)
+        // (Replacements of broken spawns don't use up the top-ups: up to Quest.MostRetries of them on top.)
+        if (set.SpawnTargets && q.Refills < 4 + Math.Min(q.Retries, Quest.MostRetries) && TargetOf(q) is { } t)
         {
             if (world.GameHours - q.LastRefill < 1) return TrackResult.Going;   // tried within the hour: wait
             q.LastRefill = world.GameHours;
-            int fits = q.Rank <= 1 ? missing + 1 : missing;
+            // What is missing (only that is needed), but never a lone pack animal: at least 2 of a kind that lives in groups, sometimes one
+            // more (his rule, 2026-11-23). Animals that live alone or in pairs, and people, come as exactly what is missing.
+            int fits = missing;
+            if (t.Kind == Catalog.Hunt && Cat.PackOf.GetValueOrDefault(t.Id, 1) > 2)
+            {
+                var dice = new Dice(world.Seed ^ Rng.Mix((ulong)q.Id * 0x9E3779B97F4A7C15UL + (ulong)q.Refills + 0x7470UL));
+                fits = Math.Max(2, missing) + (dice.Chance(0.5) ? 1 : 0);
+            }
+            // A broken brought-in group (nothing done yet) is replaced whole, as the board described it, not just by the count.
+            if (q.Retries > 0 && q.Have == 0 && q.GroupSize > fits) fits = q.GroupSize;
             var survey = Survey.Of(world, guild.Access, Cat, anchor, set.TargetRange);
-            int added = guild.SpawnNear(world, q, t, survey, fits);
-            RadiantQuestsMod.Detail($"quest #{q.Id} short by {missing}: top-up with a group of at most {fits}: {(added > 0 ? $"{added} brought in" : "none fits")}");
-            if (added > 0)
+            var added = guild.SpawnNear(world, q, t, survey, most: fits, want: fits);
+            RadiantQuestsMod.Detail($"quest #{q.Id} short by {missing}: top-up with a group of {fits}: {(added is { } a ? $"{a.Size} brought in" : "none fits")}");
+            if (added is not null)
             {
                 q.Refills++;
                 RadiantQuestsMod.Toast($"More {q.TargetName} were seen near {guild.TownName(q.Site)}. They're marked on your map.");
@@ -199,10 +284,10 @@ public abstract class CountQuest : IQuestType
         if (q.Have >= q.Need)
         {
             q.Need = q.Have;
-            RadiantQuestsMod.Toast($"{q.Describe()}: {why}, so what you did counts. Hand it in.");
+            RadiantQuestsMod.Toast($"{q.TargetName}: {why}. What you did counts: hand it in.");
             return TrackResult.Done;
         }
-        RadiantQuestsMod.Toast($"{q.Describe()}: {why}. The quest now asks for {q.Need}.");
+        RadiantQuestsMod.Toast($"{q.TargetName}: {why}. The quest now asks for {q.Need}.");
         return TrackResult.Going;
     }
 
@@ -231,7 +316,11 @@ public sealed class DefeatQuest : CountQuest
         : Cat.WarTargets.Where(t => ctx.Guild.FactionEnemy(t, ctx.Giver));
 }
 
-/// <summary>"Wipe out a group of N &lt;faction&gt; (M needed)": one real group near the town, done at the set share defeated.</summary>
+/// <summary>
+/// "Wipe out a group of N &lt;target&gt;": one group, done when all of it is defeated (his rule, 2026-11-23: no share any more). A real group near the town (people of 3 or more;
+/// animal herds only when too big for a hunt, over 15), or one brought in when taken (his rule, 2026-11-23: any size from 3, by the same
+/// size rules as the other fights; animals only above 15).
+/// </summary>
 public sealed class GroupQuest : IQuestType
 {
     public const string KindId = "group";
@@ -240,41 +329,117 @@ public sealed class GroupQuest : IQuestType
 
     static Catalog Cat => RadiantQuestsMod.Catalog;
 
-    public bool Offered(SettingsCopy set, Tab tab) => set.GroupQuests && (tab == Tab.General ? set.Culls : set.FactionQuests);
+    public bool Offered(SettingsCopy set, Tab tab) => set.GroupQuests && (tab == Tab.General ? set.Culls || set.Hunts : set.FactionQuests);
+
+    /// <summary>The target a group quest is about: a faction's people, or (General tab) an animal race.</summary>
+    static Target? TargetOf(string id) => Cat.FindTarget(Catalog.Cull, id) ?? Cat.FindTarget(Catalog.Hunt, id);
 
     public IEnumerable<Candidate> Candidates(BoardContext ctx, int rank)
     {
-        var allowed = ctx.Tab == Tab.General
-            ? Cat.Culls.Where(t => ctx.Guild.GeneralCull(t, ctx.Giver))
-            : Cat.WarTargets.Where(t => ctx.Guild.FactionEnemy(t, ctx.Giver));
-        var byId = allowed.ToDictionary(t => t.Id, StringComparer.Ordinal);
+        var set = ctx.Guild.Settings;
+        var people = new List<Target>();
+        if (ctx.Tab == Tab.Faction) people.AddRange(Cat.WarTargets.Where(t => ctx.Guild.FactionEnemy(t, ctx.Giver)));
+        else if (set.Culls) people.AddRange(Cat.Culls.Where(t => ctx.Guild.GeneralCull(t, ctx.Giver)));
+        var animals = new List<Target>();
+        if (ctx.Tab == Tab.General && set.Hunts) animals.AddRange(Cat.Hunts);
+        var byId = people.ToDictionary(t => t.Id, StringComparer.Ordinal);
+        var used = new HashSet<string>(StringComparer.Ordinal);
+        // Real groups first.
         foreach (var g in ctx.Survey.Groups)
         {
-            if (g.ModSpawned || g.Tag.Length > 0 || g.Standing < 3 || g.FactionId is not { } f || !byId.TryGetValue(Cat.Head(f), out var t)) continue;
-            if (Cat.GroupRank(Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit), g.Standing) != rank) continue;
-            var offer = new Offer
+            if (g.ModSpawned || g.Tag.Length > 0 || g.Standing < 3) continue;
+            Target? t = g.FactionId is { } f && byId.TryGetValue(Cat.Head(f), out var person) ? person : null;
+            if (t is null && g.Standing > Catalog.MostCount)
+                t = animals.FirstOrDefault(a => Survey.KeysOf(Cat, g).Contains(Survey.Key(Catalog.Hunt, a.Id)));
+            if (t is null) continue;
+            double score = Catalog.Fight(CountQuest.Unit(t) * (t.Kind == Catalog.Hunt ? g.Strength : 1), g.Standing);
+            if (Difficulty.RankOf(score) != rank) continue;
+            used.Add(t.Id);
+            yield return new Candidate(new Offer
             {
                 Kind = Kind, TargetId = t.Id, TargetName = t.Name.Trim(), Rank = rank, Group = true, GroupSize = g.Standing, PlatoonKey = g.Key,
-                Score = Catalog.Fight(Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit), g.Standing), HasAt = true, AtX = g.At.X, AtZ = g.At.Y,
-                Need = Math.Max(1, (int)Math.Ceiling(g.Standing * ctx.Guild.Settings.GroupShare)),
-            };
-            yield return new Candidate(offer, 2);
+                Score = score, HasAt = true, AtX = g.At.X, AtZ = g.At.Y, Need = Share(g.Standing, set),
+            }, 2);
+        }
+        // Brought in: per target with none real at this rank, a random size that fits.
+        if (!set.SpawnTargets) yield break;
+        foreach (var t in people.Concat(animals))
+        {
+            if (used.Contains(t.Id)) continue;
+            bool spawns = ctx.Survey.SpawnsHere(Cat, t);
+            bool stray = !spawns && ctx.Survey.StandingOf(t) == 0 && set.StrayChance > 0 && Survey.SpawnsAnywhere(Cat, t);
+            if (!spawns && !stray) continue;
+            int min = t.Kind == Catalog.Hunt ? Catalog.MostCount + 1 : 3;
+            var sizes = CountQuest.BroughtSizes(t, CountQuest.Unit(t), rank, spawns ? ctx.Survey.LocalTemplates(Cat, t) : Survey.AnyTemplates(Cat, t),
+                min, int.MaxValue);
+            if (sizes.Count == 0) continue;
+            int size = sizes[ctx.Dice.Int(0, sizes.Count - 1)];
+            yield return new Candidate(new Offer
+            {
+                Kind = Kind, TargetId = t.Id, TargetName = t.Name.Trim(), Rank = rank, Group = true, GroupSize = size,
+                Score = Catalog.Fight(CountQuest.Unit(t), size), Need = Share(size, set), Stray = !spawns,
+            }, 1, false);
         }
     }
 
+    /// <summary>How many of a group of <paramref name="size"/> must fall (the set share, rounded up).</summary>
+    static int Share(int size, SettingsCopy set) => Math.Max(1, size);
+
     public bool Accept(World world, GuildSystem guild, Quest q, Offer offer, Vector2 at)
     {
-        if (guild.Access.TagGroup(world, offer.PlatoonKey, q.Tag)) return true;
-        RadiantQuestsMod.Toast("That group has moved on or been broken since the board was put up. Pick another quest.");
-        return false;
+        if (offer.PlatoonKey != 0)
+        {
+            if (guild.Access.TagGroup(world, offer.PlatoonKey, q.Tag)) return true;
+            RadiantQuestsMod.Toast("That group has moved on or been broken since the board was put up. Pick another quest.");
+            return false;
+        }
+        // Brought in: one group at the planned size (the cap), its count and pay fitted to what really came.
+        if (TargetOf(q.TargetId) is not { } t) return false;
+        var survey = Survey.Of(world, guild.Access, Cat, at, guild.Settings.TargetRange);
+        if (guild.SpawnNear(world, q, t, survey, want: offer.GroupSize) is not { } g)
+        {
+            RadiantQuestsMod.Toast($"No {q.TargetName} group could be found. Pick another quest.");
+            return false;
+        }
+        if (g.Size != q.GroupSize)
+        {
+            double score = Catalog.Fight(CountQuest.Unit(t), g.Size);
+            if (q.Score > 0)
+            {
+                q.Cats = (long)Math.Round(q.Cats * Difficulty.CatsAt(score, q.Rank) / Difficulty.CatsAt(q.Score, q.Rank) / 10) * 10;
+                q.Rep = (int)Math.Round(q.Rep * Difficulty.RepAt(score, q.Rank) / Difficulty.RepAt(q.Score, q.Rank));
+            }
+            q.GroupSize = g.Size;
+            q.Need = Share(g.Size, guild.Settings);
+            q.Score = score;
+            RadiantQuestsMod.Toast($"The group is {g.Size} strong: {q.Need} must fall, pay {q.Cats} cats.");
+        }
+        return true;
     }
 
     public bool Counts(Quest q, PersonFacts person, string race, string familyHead) => person.GroupTag == q.Tag;
 
     public TrackResult Track(World world, GuildSystem guild, Quest q, List<Vector2> markers)
     {
-        var g = guild.Access.Groups(world).FirstOrDefault(x => x.Tag == q.Tag);
-        if (g is not null && g.Standing > 0 && !q.Skipped.Contains(g.Key))
+        var g = guild.Access.Groups(world).FirstOrDefault(x => x.Tag == q.Tag && !q.Skipped.Contains(x.Key));
+        // Its brought-in group came out broken (the first-spawn check gave it up): a replacement at once, the same group at a new spot first
+        // (GuildSystem.SpawnNear), at most Quest.MostRetries times.
+        if (g is null && q.Spawned && !q.Hit && q.Retries > 0 && q.Refills < Math.Min(q.Retries, Quest.MostRetries) && TargetOf(q.TargetId) is { } t)
+        {
+            q.Refills++;
+            var survey = Survey.Of(world, guild.Access, Cat, new Vector2(q.AnchorX, q.AnchorZ), guild.Settings.TargetRange);
+            if (guild.SpawnNear(world, q, t, survey, want: q.GroupSize) is { } again)
+            {
+                if (again.Size != q.GroupSize)
+                {
+                    q.GroupSize = again.Size;
+                    q.Need = Share(again.Size, guild.Settings);
+                }
+                RadiantQuestsMod.Toast($"The {q.TargetName} group was seen elsewhere near {guild.TownName(q.Site)}. It's marked on your map.");
+                return TrackResult.Going;
+            }
+        }
+        if (g is not null && g.Standing > 0)
         {
             // Failsafe: a group you stay near but can never reach ends the quest (counted if you fought it, else no penalty).
             if (guild.OutOfReach(world, q, [g]) is null)

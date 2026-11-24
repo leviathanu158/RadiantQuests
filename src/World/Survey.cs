@@ -66,10 +66,14 @@ public sealed class Survey
     /// <summary>Whether <paramref name="t"/> naturally spawns anywhere (an out-of-region quest can bring it in).</summary>
     public static bool SpawnsAnywhere(Catalog cat, Target t) => AnyTemplates(cat, t).Count > 0;
 
-    /// <summary>The templates of <paramref name="t"/> that naturally spawn somewhere (any region).</summary>
+    /// <summary>
+    /// The templates of <paramref name="t"/> an out-of-region quest may bring in: every one that passed the catalog's broken-group checks,
+    /// with spawn regions or not (his rule, 2026-11-23: modded creatures with no spawn region still get a chance, through this rare roll only;
+    /// they are placed in a wild region).
+    /// </summary>
     public static List<string> AnyTemplates(Catalog cat, Target t) =>
         [.. (t.Kind == Catalog.Hunt ? cat.HuntTemplates.GetValueOrDefault(t.Id, []) : cat.CullTemplates.GetValueOrDefault(t.Id, []))
-            .Where(id => cat.TemplateRegions.TryGetValue(id, out var regions) && regions.Count > 0)];
+            .Where(id => cat.TemplateMaxSize.GetValueOrDefault(id, 0) > 0)];
 
     /// <summary>The templates of <paramref name="t"/> that naturally spawn around the town.</summary>
     public List<string> LocalTemplates(Catalog cat, Target t) =>

@@ -15,7 +15,13 @@ using Meitou.Data.Gameplay;
 namespace RadiantQuests;
 
 /// <summary>A lair: a camp, nest or outpost (its TOWN record), how strong and how many its residents are, and its owner (null: wild nest).</summary>
-public sealed record Lair(string Id, string Name, double Unit, int Residents, string? Owner);
+/// <param name="Named">The fight score of its named (unique) residents, each fought on its own on top of the crowd: a camp's boss (the Dust
+/// King) makes it harder (his note, 2026-11-23).</param>
+public sealed record Lair(string Id, string Name, double Unit, int Residents, string? Owner, double Named = 0)
+{
+    /// <summary>The camp's fight score: its ordinary residents together, plus each named one.</summary>
+    public double Score => Catalog.Fight(Unit, Residents) + Named;
+}
 
 /// <summary>Something a quest can ask you to kill: an animal race (hunt) or a faction's people (cull).</summary>
 public sealed record Target(string Kind, string Id, string Name, double Unit, int Rank);
@@ -58,10 +64,35 @@ public sealed class Catalog
     public static double QuestScore(double unit, int need, double typical) => Fight(unit, need + 0.5 * Math.Max(0, typical - need));
 
     /// <summary>
-    /// How hard a fight against <paramref name="count"/> fighters of <paramref name="unit"/> strength is: strength squared times the count, so quality
-    /// weighs more than numbers (a herd of ten goats is easy; one beak thing, or three elite fighters, is not).
+    /// How hard a fight against <paramref name="count"/> fighters of <paramref name="unit"/> strength is: strength squared times the count to the
+    /// power <see cref="CountWeight"/>, so quality weighs most (a herd of ten goats is easy; one beak thing, or three elite fighters, is not) but
+    /// every extra enemy adds a little more than the last (you get surrounded): 32 starving bandits come to a hard D, 15 to a medium D.
     /// </summary>
-    public static double Fight(double unit, double count) => unit * unit * count;
+    public static double Fight(double unit, double count) => unit * unit * Math.Pow(Math.Max(0, count), CountWeight);
+
+    /// <summary>
+    /// The sizes a brought-in group of squad template <paramref name="template"/> may be spawned at (his rules, 2026-11-23, ruleset v3), up to
+    /// the most the game rolls for it:
+    ///   - people (<paramref name="animals"/> false): from 1 (one alone is a "loner"; small bands of 2-3 come up the same way);
+    ///   - animals that live alone or in pairs (usual group of 2 or fewer): 1 or 2;
+    ///   - other animals: from half their usual group (rounded up, never below 2: a pack animal is never brought in alone).
+    /// (0, 0) when the data can't say.
+    /// </summary>
+    public (int Lo, int Hi) SpawnRange(string template, bool animals)
+    {
+        int most = TemplateMaxSize.GetValueOrDefault(template, 0);
+        double usual = TemplateSize.GetValueOrDefault(template, 0);
+        if (most < 1 || usual <= 0) return (0, 0);
+        if (!animals) return (1, most);
+        if (usual <= 2) return (1, Math.Min(2, most));
+        return (Math.Min(most, Math.Max(2, (int)Math.Ceiling(usual * 0.5))), most);
+    }
+
+    /// <summary>How much numbers count (1: each enemy the same; his tuning, 2026-11-23).</summary>
+    public const double CountWeight = 1.35;
+
+    /// <summary>The most a hunt or defeat quest asks for (his rule, 2026-11-23): bigger crowds are "wipe out the group" work.</summary>
+    public const int MostCount = 15;
 
     /// <summary>The rank (0 D .. 4 S) of a group of <paramref name="size"/> fighters of <paramref name="unit"/> strength.</summary>
     public int GroupRank(double unit, int size)
@@ -100,6 +131,9 @@ public sealed class Catalog
     public IReadOnlyDictionary<string, IReadOnlySet<string>> TemplateRegions { get; private init; } = new Dictionary<string, IReadOnlySet<string>>();
 
     HashSet<string>? _wildRegions;
+
+    /// <summary>The overrides' "allowspawn" ids (templates, factions, races): never set aside by the broken-spawn checks.</summary>
+    public IReadOnlySet<string> AllowSpawnIds { get; private init; } = new HashSet<string>();
 
     /// <summary>How many a squad template usually holds (people and animals), for spawning a group that fits a quest's count.</summary>
     public IReadOnlyDictionary<string, double> TemplateSize { get; private init; } = new Dictionary<string, double>();
@@ -303,7 +337,9 @@ public sealed class Catalog
         foreach (var f in factions)
         {
             if (f.Id == FactionData.PlayerId || f.NotReal || head.ContainsKey(f.Id) || ov.Blocked(f.Id)) continue;
-            bool familyOutlaw = Outlaw(f.Id) || head.Any(kv => kv.Value == f.Id && Outlaw(kv.Key));
+            // A faction that owns settled towns (a bar, shop or headquarters: a nation like the Southern Hive) is never General work, only a
+            // Faction-tab enemy of those at war with it (his rule, 2026-11-23); bandit-type owners still count as outlaws.
+            bool familyOutlaw = (Outlaw(f.Id) || head.Any(kv => kv.Value == f.Id && Outlaw(kv.Key))) && (!owners.Contains(f.Id) || bandits.Contains(f.Id));
             var people = new List<double>();
             var templates = new List<string>();
             var sizes = new List<double>();
@@ -449,23 +485,30 @@ public sealed class Catalog
             if (ov.Blocked(r.StringId) || TownDataOf(r) is not { } town || town.Type is TownType.Town or TownType.Village) continue;
             if (town.Faction is { } owner && (owner == FactionData.PlayerId || guild.Contains(owner) || ov.Blocked(owner))) continue;
             var scores = new List<double>();
-            double count = 0;
+            double count = 0, named = 0;
+            var namedSeen = new HashSet<string>(StringComparer.Ordinal);
             foreach (var l in town.Residents)
             {
-                if (TemplateOf(db, l.Id) is not { IsUnique: false } t) continue;
+                // Unique squads too (a boss's own squad): their named people are counted on their own below.
+                if (TemplateOf(db, l.Id) is not { } t) continue;
                 foreach (var m in Members(t).Concat(t.Animals).Concat(t.Animals2))
                 {
-                    if (db.Find(m.Id) is not { } rec || rec.GetBool("unique")) continue;
+                    if (db.Find(m.Id) is not { } rec || rec.Type is not (FcsRecordType.Character or FcsRecordType.AnimalCharacter)) continue;
+                    double unit = rec.Type == FcsRecordType.Character ? PersonScore(db, rec) : AnimalScore(db, rec);
+                    if (rec.GetBool("unique"))
+                    {
+                        if (namedSeen.Add(rec.StringId)) named += Fight(unit, 1);
+                        continue;
+                    }
+                    if (t.IsUnique) continue;
                     double n = m.V1 == 0 || m.V1 == 100 ? Math.Max(1, m.V0) : (Math.Max(1, m.V0) + Math.Max(1, m.V1)) / 2.0;
-                    if (rec.Type == FcsRecordType.Character) scores.Add(PersonScore(db, rec));
-                    else if (rec.Type == FcsRecordType.AnimalCharacter) scores.Add(AnimalScore(db, rec));
-                    else continue;
+                    scores.Add(unit);
                     count += n;
                 }
             }
             if (scores.Count == 0 || count < 3) continue;
             string? headOwner = town.Faction is { } o ? (head.TryGetValue(o, out var h) ? h : o) : null;
-            lairs[r.StringId] = new Lair(r.StringId, town.Name.Trim(), scores.Average(), (int)Math.Round(count), headOwner);
+            lairs[r.StringId] = new Lair(r.StringId, town.Name.Trim(), scores.Average(), (int)Math.Round(count), headOwner, named);
         }
 
         // Region danger: per region, the median strength of the hostile groups that spawn there.
@@ -497,8 +540,29 @@ public sealed class Catalog
         double typicalRegion = Median([.. regionMedians.Values]);
         var regionDanger = regionMedians.ToDictionary(kv => kv.Key, kv => Math.Max(0, kv.Value - typicalRegion), StringComparer.Ordinal);
 
+        // Broken or test groups are never brought in (his rule, 2026-11-23): checked once here from the data, for every group a quest could
+        // spawn (with spawn regions or not). The overrides' "allowspawn" lets one through, "nospawn" keeps one out. Each one left out is a
+        // review note. A kind whose groups have no spawn regions (some mods' creatures) may still be brought in, through the rare out-of-region
+        // roll only.
+        var spawnNotes = new List<string>();
+        bool Spawnable(string templateId, string kind)
+        {
+            if (ov.AlwaysSpawn(templateId) || ov.AlwaysSpawn(kind)) return true;
+            if (ov.NeverSpawn(templateId) || ov.NeverSpawn(kind))
+            {
+                spawnNotes.Add($"group {templateId} ({kind}) is never brought in: listed under \"nospawn\"");
+                return false;
+            }
+            if (TemplateOf(db, templateId) is not { } t || BrokenGroup(db, t) is not { } why) return true;
+            spawnNotes.Add($"group {templateId} ({kind}) is never brought in: {why}; add it to \"allowspawn\" if it is fine");
+            return false;
+        }
+        foreach (var (kind, list) in huntTemplates) list.RemoveAll(id => !Spawnable(id, kind));
+        foreach (var (kind, list) in cullTemplates) list.RemoveAll(id => !Spawnable(id, kind));
+
         // Each spawnable template's size: usual, fewest and most (one pass over the data).
-        var templateSizes = regions.Keys.Select(id => (Id: id, T: TemplateOf(db, id))).Where(x => x.T is not null)
+        var templateSizes = regions.Keys.Concat(huntTemplates.Values.SelectMany(l => l)).Concat(cullTemplates.Values.SelectMany(l => l))
+            .Distinct(StringComparer.Ordinal).Select(id => (Id: id, T: TemplateOf(db, id))).Where(x => x.T is not null)
             .Select(x => (x.Id, Usual: AllPlanned(db, x.T!), Least: (int)Math.Round(AllPlanned(db, x.T!, -1)), Most: (int)Math.Round(AllPlanned(db, x.T!, 1))))
             .ToList();
 
@@ -519,8 +583,10 @@ public sealed class Catalog
             CullTemplates = cullTemplates.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.Ordinal),
             HuntTemplates = huntTemplates.ToDictionary(kv => kv.Key, kv => (IReadOnlyList<string>)kv.Value, StringComparer.Ordinal),
             TemplateRaces = templateRaces,
+            AllowSpawnIds = new HashSet<string>(ov.AllowSpawn, StringComparer.Ordinal),
         };
-        catalog.Checks = catalog.Check(db);
+        catalog.Checks = [.. catalog.Check(db), .. spawnNotes];
+        if (spawnNotes.Count > 0) log($"catalog: {spawnNotes.Count} group(s) left out of spawning as broken or test entries (see the notes)");
         log($"catalog: {catalog.Checks.Count} note(s) for review" + (catalog.Checks.Count > 0 ? " (test channel \"checks\", or the Debug log)" : ""));
         return catalog;
     }
@@ -590,6 +656,32 @@ public sealed class Catalog
         }
         if (GuildFactions.Count == 0) notes.Add("no guild factions found: no clerks will offer work");
         return notes;
+    }
+
+    /// <summary>Words that mark a group or character as a modder's test or leftover entry (whole words, any case).</summary>
+    static readonly System.Text.RegularExpressions.Regex s_testWords = new(
+        @"\b(test|testing|debug|dummy|placeholder|unused|deprecated|wip|do ?not ?use|don'?t ?use)\b",
+        System.Text.RegularExpressions.RegexOptions.IgnoreCase | System.Text.RegularExpressions.RegexOptions.CultureInvariant);
+
+    /// <summary>
+    /// Why a squad template looks broken or like a test entry (null when it looks fine): none of its members exists, a member has no race the
+    /// data knows, or its name or a member's name says test, debug, dummy, placeholder, unused, deprecated, WIP or "do not use". Read from the
+    /// data only, so it works for any mod; a wrong call is fixed with the overrides' "allowspawn".
+    /// </summary>
+    static string? BrokenGroup(GameDatabase db, SquadTemplate t)
+    {
+        if (db.Find(t.Id) is { } self && s_testWords.IsMatch(self.Name ?? "")) return $"its name \"{self.Name?.Trim()}\" marks a test entry";
+        var members = Members(t).Concat(t.Animals).Concat(t.Animals2)
+            .Select(m => db.Find(m.Id)).Where(r => r is { Type: FcsRecordType.Character or FcsRecordType.AnimalCharacter }).ToList();
+        if (members.Count == 0) return "none of its members exists in the data";
+        foreach (var m in members)
+        {
+            // (People often have no race of their own: the game picks one from their faction. Animals always name theirs.)
+            if (m!.Type == FcsRecordType.AnimalCharacter && (FirstRef(m, "race") is not { } race || db.Find(race) is null))
+                return $"animal {m.StringId} has no race the data knows";
+            if (s_testWords.IsMatch(m.Name ?? "")) return $"member \"{m.Name?.Trim()}\" is named like a test entry";
+        }
+        return null;
     }
 
     static SquadTemplate? TemplateOf(GameDatabase db, string id)

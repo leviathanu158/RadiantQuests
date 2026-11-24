@@ -80,10 +80,6 @@ public sealed class GuildSettings
             + "this distance or naturally spawns in its surrounding regions, and that's where its targets are marked and spawned.")]
     public int TargetRange { get; set; } = 15000;
 
-    [Setting("Count margin", Min = 0, Max = 0.6, Step = 0.05, SubGroup = "Targets",
-        Hint = "A quest never asks for every last one around: with 12 standing near the town and a margin of 0.25, it asks for at most 9.")]
-    public double CountMargin { get; set; } = 0.25;
-
     [Setting("Board refresh (days)", Min = 1, Max = 7, Step = 1, SubGroup = "Boards",
         Hint = "How long a town's board lasts. Taken quests stay taken: once a rank is cleared, nothing new comes until the board refreshes.")]
     public int RefreshDays { get; set; } = 1;
@@ -125,29 +121,28 @@ public sealed class GuildSettings
             + "normally live, which may be further than the target range, but never further than this.")]
     public int SpawnLimit { get; set; } = 30000;
 
-    [Setting("Group share to defeat", Min = 0.5, Max = 1, Step = 0.05, SubGroup = "Targets",
-        Hint = "How much of a group must be defeated for a group quest: 0.75 means 12 of 15. Below 1, a member you can't find never blocks it.")]
-    public double GroupShare { get; set; } = 0.75;
-
     [Setting("Extra pay when a quest starts a war", Min = 0, Max = 2, Step = 0.05, SubGroup = "Rewards",
         Hint = "A quest against a faction that isn't hostile to you yet (it will be) pays this much more cats: 0.5 is +50%.")]
     public double WarBonus { get; set; } = 0.5;
 
-    [Setting("Quest tracker", Hint = "A small list of your guild quests at the top right of the screen.")]
+    [Setting("Quest tracker", Hint = "A small list of your guild quests on screen. Drag its :: grip to move it, its corner to resize it; A- / A+ change the text size.")]
     public bool Tracker { get; set; } = true;
+
+    [Setting("Window backgrounds", Hint = "Off: the tracker, guild window and journal have no dark background behind their text.")]
+    public bool WindowBackgrounds { get; set; } = true;
 
     [Setting("Debug log", Hint = "Writes extra lines about quests and kills to log.txt. Leave off for play: it costs a little performance.")]
     public bool Debug { get; set; }
 
     /// <summary>The settings the world reads, copied in a serial step (one value per tick on every machine).</summary>
     public SettingsCopy Copy() => new(RankD, RankC, RankB, RankA, RankS, RankSS, CatsMult, RepMult, KillHours, KillRefreshHours, FailCost, AbandonCost, TargetRange, Hunts, Culls, SpawnTargets, FactionQuests,
-        GroupQuests, GroupShare, WarBonus, SpawnLimit, CountMargin, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours);
+        GroupQuests, WarBonus, SpawnLimit, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours);
 }
 
 /// <summary>The settings as the world saw them this tick.</summary>
 public sealed record SettingsCopy(int RankD, int RankC, int RankB, int RankA, int RankS, int RankSS, double CatsMult, double RepMult, int KillHours,
     int KillRefreshHours, double FailCost, double AbandonCost, int TargetRange, bool Hunts, bool Culls,
-    bool SpawnTargets, bool FactionQuests, bool GroupQuests, double GroupShare, double WarBonus, int SpawnLimit, double CountMargin,
+    bool SpawnTargets, bool FactionQuests, bool GroupQuests, double WarBonus, int SpawnLimit,
     int RefreshDays, int RerollCost, bool ReduceBelowRank, bool LairQuests, int MostPerRank = 7, double StrayChance = 0.15,
     double StragglerHours = 2, double DangerShare = 0.25, double StuckHours = 1, double DefeatedHours = 3.5)
 {

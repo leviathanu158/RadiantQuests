@@ -32,6 +32,49 @@ foreach (var name in new[] { "Starving Bandits", "Dust Bandits", "The Holy Natio
     foreach (var c in cat.WarTargets.Where(c => c.Name.Trim() == name))
         Console.WriteLine($"  defeat {name,-16} n=2,4,8: " + string.Join(" ", new[] { 2, 4, 8 }.Select(n => Ranks.Name(cat.QuestRank(Catalog.Cull, cat.UnitOf.GetValueOrDefault(c.Id, c.Unit), n, cat.SizeOf.GetValueOrDefault(c.Id, 1))))));
 
+Console.WriteLine("== fighter strength and scores (unit; score at n = 1, 3, 8, 15, 32):");
+foreach (var name in new[] { "Starving Bandits", "Dust Bandits", "Hill Marauders", "The Holy Nation", "Cannibals", "Cannibal Hunters" })
+    foreach (var c in cat.WarTargets.Where(c => c.Name.Trim() == name))
+    {
+        double u = cat.UnitOf.GetValueOrDefault(c.Id, c.Unit);
+        Console.WriteLine($"  {name,-18} unit {u,7:0.0}  " + string.Join("  ", new[] { 1, 3, 8, 15, 32 }.Select(n => $"{n}:{Catalog.Fight(u, n),8:0} {Ranks.Name(Difficulty.RankOf(Catalog.Fight(u, n)))}")));
+    }
+foreach (var name in new[] { "Goat", "Garru", "Swamp Turtle", "Bonedog", "Beak Thing", "Crop Louse", "Skimmer", "Iron Wasp" })
+    foreach (var h in cat.Hunts.Where(h => h.Name.Trim() == name))
+        Console.WriteLine($"  {name,-18} unit {h.Unit,7:0.0}  pack {cat.PackOf.GetValueOrDefault(h.Id, 1),4:0.0}  " + string.Join("  ", new[] { 1, 3, 8, 15 }.Select(n => $"{n}:{Catalog.Fight(h.Unit, n),8:0} {Ranks.Name(Difficulty.RankOf(Catalog.Fight(h.Unit, n)))}")));
+
+Console.WriteLine("== spawnable: kinds with a group that has spawn regions, and those without (only placed by the game's towns/camps, or never):");
+foreach (var (label, list, tmpl) in new[] { ("hunts", cat.Hunts, cat.HuntTemplates), ("defeats", cat.WarTargets, cat.CullTemplates) })
+{
+    var none = list.Where(t => !(tmpl.GetValueOrDefault(t.Id) ?? []).Any(id => cat.TemplateRegions.TryGetValue(id, out var r) && r.Count > 0)).ToList();
+    var noTemplates = none.Where(t => (tmpl.GetValueOrDefault(t.Id) ?? []).Count == 0).ToList();
+    Console.WriteLine($"  {label}: {list.Count} kinds, {list.Count - none.Count} spawnable, {none.Count} not ({noTemplates.Count} with no group at all)");
+    Console.WriteLine("    e.g. with groups but no regions: " + string.Join(", ", none.Except(noTemplates).Take(25).Select(t => t.Name.Trim())));
+    Console.WriteLine("    e.g. no group at all: " + string.Join(", ", noTemplates.Take(25).Select(t => t.Name.Trim())));
+}
+
+if (Environment.GetEnvironmentVariable("RQ_TOWNS") is { Length: > 0 } townNames)
+{
+    var factionsAll = Meitou.Data.Gameplay.FactionData.LoadAll(db);
+    var rel = Meitou.Data.Gameplay.FactionRelations.Build(factionsAll);
+    foreach (var r in db.OfType(Meitou.Data.Fcs.FcsRecordType.Town).Where(r => townNames.Split(',').Any(n => (r.Name ?? "").Contains(n.Trim(), StringComparison.OrdinalIgnoreCase))))
+    {
+        Meitou.Data.Gameplay.TownData? town = null;
+        try { town = Meitou.Data.Gameplay.TownData.From(r); } catch { }
+        if (town is null) continue;
+        var owner = town.Faction;
+        var of = factionsAll.FirstOrDefault(f => f.Id == owner);
+        string bars = string.Join(",", town.BarSquads.Select(l => db.Find(l.Id) is { } s ? $"{s.Name}" : l.Id));
+        int hostile = 0, total = 0;
+        if (rel.IndexOf(owner ?? "") is var oi && oi >= 0)
+            foreach (var g in cat.GuildFactions) { int gi = rel.IndexOf(g); if (gi < 0 || gi == oi) continue; total++; if (rel.IsHostile(gi, oi)) hostile++; }
+        if (cat.Lairs.TryGetValue(r.StringId, out var lair))
+            Console.WriteLine($"camp '{lair.Name}': {lair.Residents} residents, unit {lair.Unit:0.0}, named {lair.Named:0}, score {lair.Score:0} -> rank {Ranks.Name(Difficulty.RankOf(lair.Score))}");
+        Console.WriteLine($"town '{r.Name}' ({r.StringId}) type {town.Type}: owner {owner} '{of?.Name}' type {of?.FundamentalType} guild={cat.GuildFactions.Contains(owner ?? "")} "
+            + $"hostile to {hostile}/{total} guild factions; bars [{bars}]");
+    }
+}
+
 if (Environment.GetEnvironmentVariable("RQ_TEMPLATE") is { Length: > 0 } tid)
 {
     Console.WriteLine($"== template {tid}: size {cat.TemplateSize.GetValueOrDefault(tid)} races {string.Join(", ", cat.TemplateRaces.GetValueOrDefault(tid) ?? new HashSet<string>())}");

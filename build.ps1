@@ -1,4 +1,4 @@
-﻿# Radiant Quests for Meitou: build the mod and install it into Kenshi's mods folder.
+# Radiant Quests for Meitou: build the mod and install it into Kenshi's mods folder.
 # Run build.bat (double-click). Optional: -MeitouDir <a Meitou version folder>  -KenshiDir <your Kenshi folder>  -NoInstall
 param(
     [string]$MeitouDir = "",
@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$wantVersion = "0.22.2-nightly.20261123.2"
+$wantVersion = "0.22.2-nightly.20261124"
 $modName = "RadiantQuests"
 
 function Say($text, $color = "Gray") { Write-Host $text -ForegroundColor $color }

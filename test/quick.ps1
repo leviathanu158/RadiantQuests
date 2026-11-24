@@ -40,7 +40,8 @@ while (-not ((Test-Path "$D\out") -and (Select-String -Path "$D\out" -Pattern '"
 Agent "pause" | Out-Null
 
 $t0 = Get-Date
-do { Run 3; $clerks = (Rq @("clerks")) -join '' } while ($clerks -notmatch 'Squin' -and ((Get-Date) - $t0).TotalSeconds -lt 120)
+# Any loaded clerk will do (the save may be anywhere: pick-save.ps1 chooses it by mod list); Squin's when it is there.
+do { Run 3; $clerks = (Rq @("clerks")) -join '' } while ($clerks -notmatch '\d+: ' -and ((Get-Date) - $t0).TotalSeconds -lt 120)
 $idx = if ($clerks -match '(\d+)[:=\s]+[^|]*Squin') { $Matches[1] } else { "0" }
 if ($WaitFirst -gt 0) { Run $WaitFirst }
 Rq @("open $idx")

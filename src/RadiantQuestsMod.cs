@@ -30,6 +30,8 @@ public sealed class RadiantQuestsMod : IMod
 
         c.AddSystem("guild", ctx => new GuildSystem(ctx.Data, ctx.Find<Meitou.Simulation.Population.PopulationSystem>()), SystemAnchor.End);
         c.AddUi(new GuildUi());
+        // The quest journal: G by default (free in Meitou's and the mods' keys), rebindable on the Controls page.
+        c.AddKeyAction("journal", "Guild quest journal", _ => GuildUi.ToggleJournal(), Meitou.Game.Host.Input.Key.G);
         Log(PausedCommands.Patch(c.Harmony));
         Log(Notices.Patch(c.Harmony));
         Log("ready: right click a faction's bartender and choose Adventurers' Guild");

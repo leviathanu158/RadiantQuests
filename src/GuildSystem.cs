@@ -18,9 +18,9 @@ namespace RadiantQuests;
 public sealed record ClerkInfo(CharacterId Id, int Site, string Faction, string FactionName, string TownName, Vector3 Position);
 
 public sealed record QuestView(int Id, string Text, int Rank, int Have, int Need, double HoursLeft, long Cats, int Rep, bool Done, bool General,
-    string GiverName, IReadOnlyList<Vector2> Targets, string TargetId = "");
+    string GiverName, IReadOnlyList<Vector2> Targets, string TargetId = "", string Band = "", string Town = "", int Relation = 0);
 
-public sealed record OfferView(int Slot, string Text, int Rank, long Cats, int Rep, bool Taken, bool Locked, int Relation = 0);
+public sealed record OfferView(int Slot, string Text, int Rank, long Cats, int Rep, bool Taken, bool Locked, int Relation = 0, string Band = "");
 
 public sealed record BoardView(int Site, long Day, IReadOnlyList<OfferView> Offers, IReadOnlyList<OfferView> FactionOffers, int RerollCost = 0);
 
@@ -99,8 +99,34 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                     case TestKill k: TestCount(world, k.TargetId); break;
                     case TestRep r: GainRep(r.Amount); break;
                     case TestFinish f: TestFinishQuest(world, f.QuestId); break;
+                    case TestHerd th: TestHerdReport(world, th.QuestId); break;
+                    case TestSetAges ta:
+                        if (_s.Quests.FirstOrDefault(x => x.Id == ta.QuestId) is { } aq
+                            && Access.Groups(world).FirstOrDefault(g => g.Tag == aq.Tag) is { } ag)
+                            RadiantQuestsMod.Log($"test: set {Access.SetAgesEach(world, ag.Id, ta.Ages)} ages in quest #{aq.Id}'s group");
+                        break;
+                    case TestBreakSpawn b:
+                        // As if the quest's brought-in group came out broken (test channel only).
+                        if (_s.SpawnChecks.Concat(Access.Groups(world).Where(g => g.ModSpawned && g.Tag == $"radiantquests:{b.QuestId}")
+                                .Select(g => KeyValuePair.Create(g.Key, new SpawnCheck { Template = g.TemplateId, Quest = b.QuestId })))
+                            .FirstOrDefault(kv => kv.Value.Quest == b.QuestId) is { Value: not null } hit)
+                        {
+                            _s.SpawnChecks.Remove(hit.Key);
+                            SpawnBroke(hit.Key, hit.Value, "test");
+                            _dirty = true;
+                        }
+                        break;
                     case TestSkip k:
-                        foreach (var q in _s.Quests) if (q.Deadline < double.MaxValue / 2) q.Deadline -= k.Hours;
+                        // As if that many game hours had passed for the mod's own clocks (test channel only): quest deadlines, the
+                        // brought-in groups' removal timers, the out-of-reach and straggler timers, the top-up wait.
+                        foreach (var q in _s.Quests)
+                        {
+                            if (q.Deadline < double.MaxValue / 2) q.Deadline -= k.Hours;
+                            if (q.NearSince >= 0) q.NearSince -= k.Hours;
+                            if (q.LastContact >= 0) q.LastContact -= k.Hours;
+                            q.LastRefill -= k.Hours;
+                        }
+                        foreach (var key in _s.SpawnDefeats.Keys.ToList()) _s.SpawnDefeats[key] -= k.Hours;
                         _dirty = true;
                         break;
                 }
@@ -177,9 +203,13 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             var pos = table.Next[slot].Position;
             int site = squad.Town >= 0 ? squad.Town : _data.TownAt(pos);
             if (site < 0 || site >= _data.Sites.Count) continue;
+            // The town as it is NOW (a taken-over or rebuilt town is a new TOWN record with its new owner): a town or village, owned by a real
+            // faction (not you) that isn't hostile to you now, and a barman whose faction isn't either (his rule, 2026-11-23: clerks follow the
+            // world, not a list made at start - the Hub's outlaws or a mod's new owner get a clerk while they deal with you).
             var townData = _data.Sites[site].Town;
+            if (townData.Type is not (Meitou.Data.Gameplay.TownType.Town or Meitou.Data.Gameplay.TownType.Village)) continue;
             if (townData.Faction is not { } owner || _data.FactionIndex(owner) is var ownerIndex && ownerIndex < 0) continue;
-            if (Array.BinarySearch(_guildFactions, ownerIndex) < 0) continue;
+            if (ownerIndex == _data.PlayerFaction) continue;
             if (Access.Hostile(squad.Faction, _data.PlayerFaction) || Access.Hostile(ownerIndex, _data.PlayerFaction)) continue;
             candidates.Add((kind, new ClerkInfo(squad.Leader, site, owner, Cat.FactionNames.GetValueOrDefault(owner, owner), townData.Name, pos)));
             bestAt[site] = Math.Min(bestAt.GetValueOrDefault(site, int.MaxValue), kind);
@@ -279,6 +309,9 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             Stray = offer.Stray,
             Dangerous = offer.Dangerous,
             AcceptedTick = world.Tick,
+            Score = offer.Score,
+            Age = offer.Age,
+            Strays = offer.Strays,
         };
         // Taken or not, the offer is used up: a cleared board stays cleared until it refreshes.
         offer.Taken = true;
@@ -330,9 +363,12 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     {
         var q = _s.Quests.FirstOrDefault(x => x.Id == id);
         if (q is null) return;
+        // Nothing of it can be found now (no target marked, none defeated): not your fault, so giving it up is free.
+        bool nothing = !q.Done && q.Have == 0 && _markers.TryGetValue(q.Id, out var at) && at.Count == 0;
         End(world, q);
-        int cost = (int)Math.Round(q.Rep * _set.AbandonCost);
-        RadiantQuestsMod.Toast($"Quest abandoned: {q.Describe()}." + (cost > 0 ? $" -{cost} guild rep" + (q.General ? "." : " and faction points.") : ""));
+        int cost = nothing ? 0 : (int)Math.Round(q.Rep * _set.AbandonCost);
+        RadiantQuestsMod.Toast($"Quest abandoned: {q.Describe()}." + (cost > 0 ? $" -{cost} guild rep" + (q.General ? "." : " and faction points.")
+            : nothing ? " None could be found: no penalty." : ""));
         LoseRep(cost);
         if (!q.General) LosePoints(q.GiverFaction, cost);
     }
@@ -458,7 +494,59 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// <summary>The world's slow step: the only serial step where groups may be removed (Meitou's rule).</summary>
     public void SlowWorld(World world)
     {
-        if (world.Tick - _lastCleanup >= 300) Guarded("cleanup", () => Cleanup(world));
+        if (world.Tick - _lastCleanup >= 300)
+        {
+            Guarded("spawn checks", () => CheckSpawns(world));
+            Guarded("cleanup", () => Cleanup(world));
+        }
+    }
+
+    /// <summary>Broken spawns in a row after which a spawn group is not brought in again in this save.</summary>
+    const int StrikesOut = 3;
+
+    /// <summary>
+    /// Every ten seconds: the first-spawn check of brought-in groups (his rules, 2026-11-23). A group is looked at once it is loaded and has
+    /// settled (the second look). If it came out broken (WorldAccess.GroupProblem) it is given up on for its quest at once (marked skipped:
+    /// the quest's tracking brings a replacement, from another spawn group where there is one) and is cleared away like any group no longer
+    /// needed; its spawn group gets a strike, and after 3 in a row it is not brought in again in this save. A good spawn clears the strikes.
+    /// </summary>
+    void CheckSpawns(World world)
+    {
+        if (_s.SpawnChecks.Count == 0) return;
+        var groups = Access.Groups(world);
+        foreach (var (key, check) in _s.SpawnChecks.OrderBy(kv => kv.Key).ToList())
+        {
+            var g = groups.FirstOrDefault(x => x.Key == key);
+            if (g is null || world.GameHours - check.Hours > 48) { _s.SpawnChecks.Remove(key); continue; }
+            if (!Access.Loaded(world, g.Id)) continue;
+            if (!check.LoadedSeen) { check.LoadedSeen = true; continue; }
+            _s.SpawnChecks.Remove(key);
+            _dirty = true;
+            if (Access.GroupProblem(world, g.Id) is not { } problem)
+            {
+                _s.SpawnStrikes.Remove(check.Template);
+                continue;
+            }
+            SpawnBroke(key, check, problem);
+        }
+    }
+
+    /// <summary>A brought-in group came out broken: a strike for its spawn group, and its quest gives it up and brings a replacement.</summary>
+    void SpawnBroke(ulong key, SpawnCheck check, string problem)
+    {
+        {
+            int strikes = _s.SpawnStrikes[check.Template] = _s.SpawnStrikes.GetValueOrDefault(check.Template) + 1;
+            RadiantQuestsMod.Log($"brought-in group {check.Template} came out broken ({problem}): strike {strikes} of {StrikesOut}"
+                + (strikes >= StrikesOut ? "; not brought in again in this save (overrides \"allowspawn\" lets it back)" : ""));
+            if (_s.Quests.FirstOrDefault(x => x.Id == check.Quest) is { } q)
+            {
+                if (!q.Skipped.Contains(key)) q.Skipped.Add(key);
+                q.Broken.Remove(check.Template);
+                q.Broken.Add(check.Template);   // last = the one to retry
+                q.Retries++;
+                q.LastRefill = -1;   // the replacement comes at once
+            }
+        }
     }
 
     /// <summary>
@@ -531,56 +619,95 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// <summary>
     /// Spawns one ordinary group of <paramref name="t"/> for <paramref name="q"/> in a region around the town where it naturally lives (any
     /// region where wild things live, for an out-of-region quest), from a third of the quest area out to the furthest-spawn setting; never a
-    /// guild faction's or your own group. The group that fits best: the smallest holding what is still needed; with <paramref name="most"/>,
-    /// only one that can never hold more than that (a top-up never brings more than what is missing). Returns its size, 0 when none.
+    /// guild faction's or your own group. The group that fits <paramref name="want"/> best (default: what is still needed): where Meitou can
+    /// cap a spawn, one whose sizes include it, spawned at exactly that many; else the one whose usual size is nearest. With
+    /// <paramref name="most"/>, never more than that (a top-up never brings more than what is missing). Returns the group, null when none.
     /// </summary>
-    public int SpawnNear(World world, Quest q, Target t, Survey survey, int most = int.MaxValue)
+    public (int Size, ulong Key)? SpawnNear(World world, Quest q, Target t, Survey survey, int most = int.MaxValue, int want = 0)
     {
+        if (want <= 0) want = Math.Max(1, q.Need - q.Have);
+        want = Math.Min(want, most);
+        bool cap = WorldAccess.CanCap;
         var templates = q.Stray ? Survey.AnyTemplates(Cat, t) : survey.LocalTemplates(Cat, t);
-        if (most < int.MaxValue)
+        // Groups set aside after 3 broken spawns in a row are not used (unless the overrides allow them). A group that just came out broken
+        // for this quest is tried again first, at a new spot (his idea, 2026-11-23): a bad spot clears on the retry, a truly broken group
+        // strikes out on this one quest and is never used again; then another group is used.
+        templates = [.. templates.Where(id => _s.SpawnStrikes.GetValueOrDefault(id) < StrikesOut || Cat.AllowSpawnIds.Contains(id) || Cat.AllowSpawnIds.Contains(t.Id))];
+        if (q.Broken.Count > 0 && templates.Contains(q.Broken[^1])) templates = [q.Broken[^1]];
+        if (most < int.MaxValue && !cap)
             templates = [.. templates.Where(id => Cat.TemplateMaxSize.TryGetValue(id, out int size) && size <= most)];
-        if (templates.Count == 0 || q.Site < 0) return 0;
-        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)q.Id * 0x9E3779B97F4A7C15UL + (ulong)q.Refills) ^ 0x5241444951554553UL);
+        if (templates.Count == 0 || q.Site < 0) return null;
+        // How far a template is from the size wanted: with the cap, 0 when its spawn range (Catalog.SpawnRange) holds it; else its usual
+        // size's distance. A top-up (with "most") may be smaller than a range's low end: then the nearest.
+        bool animals = t.Kind == Catalog.Hunt;
+        double Off(string id)
+        {
+            if (!cap) return Math.Abs(Cat.TemplateSize.GetValueOrDefault(id, want) - want);
+            var (lo, hi) = Cat.SpawnRange(id, animals);
+            return hi < 1 ? 1000 : want < lo ? lo - want : want > hi ? want - hi : 0;
+        }
+        // (Retries and given-up groups change the seed, so a retry looks at a new spot.)
+        // (Every spawn of the quest so far changes the seed, so a replacement or top-up never lands on the spot of the one before.)
+        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)q.Id * 0x9E3779B97F4A7C15UL + (ulong)q.Refills + ((ulong)q.Retries << 20) + ((ulong)q.Skipped.Count << 40)
+            + ((ulong)q.Spawns << 50)) ^ 0x5241444951554553UL);
         for (int attempt = 0; attempt < 3; attempt++)
         {
-            // The group that fits the count best: the smallest that holds what is still needed (a hunt of 2 brings a small pack, not a
-            // herd of 13), else the biggest there is; ties by the dice.
-            int still = Math.Max(1, q.Need - q.Have);
-            var fitting = templates.Where(id => Cat.TemplateSize.GetValueOrDefault(id, still) >= still).ToList();
-            var pool = fitting.Count > 0 ? fitting : templates;
-            double best = fitting.Count > 0 ? pool.Min(id => Cat.TemplateSize.GetValueOrDefault(id, still)) : pool.Max(id => Cat.TemplateSize.GetValueOrDefault(id, still));
-            var choice = pool.Where(id => Math.Abs(Cat.TemplateSize.GetValueOrDefault(id, still) - best) < 0.01).ToList();
+            double best = templates.Min(Off);
+            var choice = templates.Where(id => Off(id) - best < 0.01).ToList();
             string template = choice[dice.Int(0, choice.Count - 1)];
             int faction = Access.SpawnFaction(template);
             if (faction < 0 || faction == _data.PlayerFaction || Array.BinarySearch(_guildFactions, faction) >= 0) continue;
             var regions = q.Stray ? Cat.WildRegions : Cat.TemplateRegions.GetValueOrDefault(template);
-            if (regions is null || RingSpot(survey.At, regions, dice) is not { } spot) continue;
-            int size = Access.Spawn(world, faction, template, q.Site, spot, q.Tag);
+            if (regions is null || RingSpot(world, survey.At, regions, dice) is not { } spot) continue;
+            var (size, key) = Access.Spawn(world, faction, template, q.Site, spot, q.Tag, cap ? want : 0);
             if (size <= 0) continue;
             q.Spawned = true;
-            RadiantQuestsMod.Detail($"quest #{q.Id}: spawned {template} ({_data.FactionId(faction)}) at {spot.X:0},{spot.Y:0}, {size} strong");
-            return size;
+            q.Spawns++;
+            _s.SpawnChecks[key] = new SpawnCheck { Template = template, Quest = q.Id, Hours = world.GameHours };
+            RadiantQuestsMod.Detail($"quest #{q.Id}: spawned {template} ({_data.FactionId(faction)}) at {spot.X:0},{spot.Y:0}, {size} strong (wanted {want})");
+            return (size, key);
         }
-        return 0;
+        return null;
     }
 
-    /// <summary>A point in one of <paramref name="regions"/>, on rings out from <paramref name="at"/>, as near as can be (seeded order).</summary>
-    Vector2? RingSpot(Vector2 at, IReadOnlySet<string> regions, Dice dice)
+    /// <summary>
+    /// A spot for a group (his rules, 2026-11-23), on rings out from <paramref name="at"/>, as near as can be (seeded order): in one of
+    /// <paramref name="regions"/> (the kind's own; any wild region for a rare out-of-region quest), out of sight of all your characters (it is
+    /// still marked on the map at once), and good ground (WorldAccess.SpotProblem: dry, not steep, reachable from the town's side). Null when
+    /// there is none out to the furthest-spawn setting.
+    /// </summary>
+    Vector2? RingSpot(World world, Vector2 at, IReadOnlySet<string> regions, Dice dice)
     {
         if (regions.Count == 0) return null;
         float range = _set.TargetRange, limit = Math.Max(range, _set.SpawnLimit);
-        for (float r = range * 0.3f; r <= limit; r += Math.Max(1500, range * 0.15f))
+        int seen = 0, region = 0, ground = 0, crowded = 0;
+        string lastProblem = "";
+        // Never on top of another group the mod brought in (his test, 2026-11-24: five quests' spawns landed on one spot and fought each other).
+        var others = Access.Groups(world).Where(g => g.ModSpawned && g.Tag.StartsWith("radiantquests:", StringComparison.Ordinal)).Select(g => g.At).ToList();
+        for (float r = range * 0.3f; r <= limit; r += Math.Max(1000, range * 0.1f))
         {
             double start = dice.Double() * Math.PI * 2;
             for (int i = 0; i < 16; i++)
             {
                 double a = start + i * Math.PI / 8;
                 var p = at + new Vector2((float)Math.Cos(a), (float)Math.Sin(a)) * r;
-                if (Access.Region(p) is { } g && regions.Contains(g)) return p;
+                if (Access.Region(p) is not { } g || !regions.Contains(g)) { region++; continue; }
+                if (Access.YoursNearPoint(world, p, SightReach)) { seen++; continue; }
+                if (others.Any(o => Vector2.Distance(o, p) < SpawnSpacing)) { crowded++; continue; }
+                if (Access.SpotProblem(world, p, at) is { } problem) { ground++; lastProblem = problem; continue; }
+                return p;
             }
         }
+        RadiantQuestsMod.Detail($"no spawn spot near {at.X:0},{at.Y:0}: {region} outside the regions, {seen} in your sight, {crowded} near another "
+            + $"brought-in group, {ground} bad ground (last: {lastProblem})");
         return null;
     }
+
+    /// <summary>How far your characters see (units): nothing is spawned nearer than this to any of them.</summary>
+    const float SightReach = 3000;
+
+    /// <summary>How far apart groups the mod brings in are kept (units), so two quests' spawns never meet at once.</summary>
+    const float SpawnSpacing = 1500;
 
     #endregion
 
@@ -597,13 +724,14 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         var quests = _s.Quests.Select(q => new QuestView(q.Id, q.Describe(), q.Rank, q.Have, q.Need,
             q.Deadline >= double.MaxValue / 2 ? double.PositiveInfinity : q.Deadline - world.GameHours, q.CatsNow, q.RepNow, q.Done, q.General,
             Cat.FactionNames.GetValueOrDefault(q.GiverFaction, q.GiverFaction),
-            q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. at] : [], q.TargetId)).ToList();
+            q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. at] : [], q.TargetId, Difficulty.Band(q.Score, q.Rank), TownName(q.Site),
+            q.General ? 0 : (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * q.PayShare))).ToList();
         var boards = new Dictionary<int, BoardView>();
         OfferView View(Offer o, int myRank)
         {
             var (c, r) = _set.ReduceBelowRank ? Ranks.BelowRankPay(myRank - o.Rank) : (1.0, 1.0);
             return new OfferView(o.Slot, o.Describe(), o.Rank, (long)Math.Round(o.Cats * c * _set.CatsMult),
-                (int)Math.Round(o.Rep * r * _set.RepMult), o.Taken, o.Rank > myRank, o.Relation);
+                (int)Math.Round(o.Rep * r * _set.RepMult), o.Taken, o.Rank > myRank, o.Relation, Difficulty.Band(o.Score, o.Rank));
         }
         foreach (var b in _s.Boards)
         {
@@ -639,10 +767,18 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             _s.Quests ??= [];
             _s.Boards ??= [];
             _s.FactionPoints = new Dictionary<string, long>(_s.FactionPoints ?? [], StringComparer.Ordinal);
+            _s.SpawnDefeats ??= [];
+            _s.SpawnChecks ??= [];
+            _s.SpawnStrikes = new Dictionary<string, int>(_s.SpawnStrikes ?? [], StringComparer.Ordinal);
             foreach (var b in _s.Boards) b.FactionOffers ??= [];
             foreach (var q in _s.Quests)
             {
                 q.Defeated ??= [];
+                q.Aged ??= [];
+                q.Broken ??= [];
+                q.Skipped ??= [];
+                q.LostToOthers ??= [];
+                q.Roster ??= [];
                 // Before 0.7.0 a group quest was a "cull" with Group set.
                 if (q.Group && q.Kind == Catalog.Cull) q.Kind = GroupQuest.KindId;
             }

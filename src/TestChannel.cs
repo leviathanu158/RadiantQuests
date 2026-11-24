@@ -92,6 +92,10 @@ internal static class TestChannel
             case "close":
                 GuildUi.Close();
                 return "closed";
+            case "journal":
+                GuildUi.Close();
+                GuildUi.ToggleJournal();
+                return "journal toggled";
             case "accept":
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
                 Send(new AcceptOffer(clerks[s_openIndex].Id, clerks[s_openIndex].Site, Arg(1)) { Tick = tick });
@@ -144,6 +148,16 @@ internal static class TestChannel
                 return "sent";
             case "finish":
                 Send(new TestFinish(Arg(1)) { Tick = tick });
+                return "sent";
+            case "herd":
+                Send(new TestHerd(Arg(1)) { Tick = tick });
+                return "sent (see log: herd #)";
+            case "setages":
+                Send(new TestSetAges(Arg(1), [.. p.Skip(2).Select(a => float.TryParse(a, NumberStyles.Float, CultureInfo.InvariantCulture, out float v) ? v : 1f)])
+                    { Tick = tick });
+                return "sent";
+            case "breakspawn":
+                Send(new TestBreakSpawn(Arg(1)) { Tick = tick });
                 return "sent";
             case "quests":
                 if (view is null) return "no view yet";

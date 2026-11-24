@@ -25,16 +25,19 @@ public static class Ranks
         _ => (0.15, 0),
     };
 
-    /// <summary>The cats a quest of <paramref name="rank"/> pays, from the lowest to the highest of the range.</summary>
+    /// <summary>
+    /// The cats a quest of <paramref name="rank"/> pays, from its very easiest to its very hardest. The ranges never overlap (his rule,
+    /// 2026-11-23): the easiest D always pays more than the hardest E.
+    /// </summary>
     public static (int Min, int Max) Cats(int rank) => rank switch
     {
-        0 => (250, 700),
-        1 => (600, 1800),
-        2 => (1800, 4800),
-        3 => (4800, 12000),
-        4 => (12000, 24000),
-        5 => (24000, 60000),
-        _ => (60000, 140000),
+        0 => (250, 600),
+        1 => (650, 1800),
+        2 => (1900, 4800),
+        3 => (5000, 12000),
+        4 => (12500, 24000),
+        5 => (25000, 60000),
+        _ => (62000, 140000),
     };
 
     /// <summary>The guild rep a quest of <paramref name="rank"/> pays, before the random spread.</summary>
@@ -80,6 +83,10 @@ public sealed class Offer
     public float AtX, AtZ;
     /// <summary>The place is dangerous: the rank was raised for what else lives there.</summary>
     public bool Dangerous;
+    /// <summary>The mean age of its animals (1 adult, or not animals); counts in the difficulty only.</summary>
+    public float Age = 1;
+    /// <summary>A few pack animals wandered off from their pack (E and D): "Hunt 3 Goat (strays)".</summary>
+    public bool Strays;
 
     public void SetAt(System.Numerics.Vector2 at)
     {
@@ -88,7 +95,7 @@ public sealed class Offer
         AtZ = at.Y;
     }
 
-    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous);
+    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays);
 }
 
 /// <summary>One town's board for one day.</summary>
@@ -155,6 +162,21 @@ public sealed class Quest
     public List<ulong> LostToOthers = [];
     /// <summary>The people already counted (lasting ids): each counts once, whatever happens to them after.</summary>
     public List<ulong> Defeated = [];
+    /// <summary>The fight score behind its rank (Easy / Medium / Hard within the rank); 0 for a quest from before 0.8.0.</summary>
+    public double Score;
+    /// <summary>The mean age of its animals when taken (1 adult or not animals).</summary>
+    public float Age = 1;
+    /// <summary>Brought-in groups whose animals' ages were already checked against the rank (platoon keys).</summary>
+    public List<ulong> Aged = [];
+    /// <summary>Spawn groups (template ids) that came out broken for this quest: its replacement uses another where there is one.</summary>
+    public List<string> Broken = [];
+    /// <summary>How many of its brought-in groups came out broken and were replaced (at most <see cref="MostRetries"/>).</summary>
+    public int Retries;
+    /// <summary>How many groups were brought in for it so far (each new one is placed with a new roll).</summary>
+    public int Spawns;
+
+    /// <summary>The most broken spawns a quest replaces; after that the usual fallbacks (count drops, or called off with no penalty).</summary>
+    public const int MostRetries = 5;
 
     /// <summary>The platoon tag of this quest's group or spawned group.</summary>
     public string Tag => $"radiantquests:{Id}";
@@ -190,22 +212,40 @@ public sealed class Quest
         }
     }
 
-    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous);
+    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays);
+
+    /// <summary>A few pack animals that wandered off (see <see cref="Offer.Strays"/>).</summary>
+    public bool Strays;
 
     public static string Describe(string kind, int need, string target, bool group = false, int groupSize = 0, bool startsWar = false,
-        bool dangerous = false)
+        bool dangerous = false, float age = 1, bool strays = false)
     {
+        // The count is the whole group (his rule, 2026-11-23: no margin), so no "(group of N)" / "(N needed)" any more.
+        string of = strays ? " (strays)" : "";
         string text = kind switch
         {
-            _ when group || kind == GroupQuest.KindId => $"Wipe out a group of {groupSize} {target} ({need} needed)",
+            _ when group || kind == GroupQuest.KindId => $"Wipe out a group of {groupSize} {target}",
             LairQuest.KindId => $"Clear {target}: defeat everyone at the camp (about {groupSize})",
-            Catalog.Hunt => $"Hunt {need} {target}",
-            Catalog.Cull => $"Defeat {need} {target}",
+            // No age words (his call, 2026-11-23: herds are mixed); the ages count in the difficulty and pay only.
+            Catalog.Hunt => $"Hunt {need} {target}{of}",
+            // One person alone (brought in, or a real one wandering): a loner (his rule, 2026-11-23: no set chance, just a roll of one).
+            Catalog.Cull when need == 1 && groupSize == 1 => $"Defeat {(("AEIOU".Contains(char.ToUpperInvariant(Loner(target)[0]))) ? "an" : "a")} {Loner(target)} Loner",
+            Catalog.Cull => $"Defeat {need} {target}{of}",
             _ => $"{kind} {need} {target}",
         };
         if (dangerous) text += " (dangerous area)";
         return startsWar ? $"{text} - makes {target} hostile to you" : text;
     }
+
+    /// <summary>A faction's name as one of its people: "Dust Bandits" -> "Dust Bandit", "The Holy Nation" -> "Holy Nation".</summary>
+    static string Loner(string faction)
+    {
+        string s = faction.Trim();
+        if (s.StartsWith("The ", StringComparison.OrdinalIgnoreCase)) s = s[4..];
+        if (s.Length > 3 && s.EndsWith('s') && !s.EndsWith("ss", StringComparison.Ordinal) && !s.EndsWith("us", StringComparison.Ordinal)) s = s[..^1];
+        return s;
+    }
+
 
     public void Hash(ref StateHasher h)
     {
@@ -248,7 +288,26 @@ public sealed class Quest
         foreach (var r in Roster) h.Add(r);
         h.Add(Defeated.Count);
         foreach (var d in Defeated) h.Add(d);
+        h.Add(Score);
+        h.Add(Age);
+        h.Add(Aged.Count);
+        foreach (var a in Aged) h.Add(a);
+        h.Add(Broken.Count);
+        foreach (var b in Broken) h.Add(Rng.StableHash(b));
+        h.Add(Retries);
+        h.Add(Spawns);
+        h.Add(Strays);
     }
+}
+
+/// <summary>A brought-in group waiting for its first-spawn check: its template, its quest, when it came (game hours), and whether it was
+/// already seen loaded once (it is checked on the next look, after it has settled).</summary>
+public sealed class SpawnCheck
+{
+    public string Template = "";
+    public int Quest;
+    public double Hours;
+    public bool LoadedSeen;
 }
 
 /// <summary>Everything the guild keeps.</summary>
@@ -265,6 +324,14 @@ public sealed class GuildState
     public Dictionary<string, long> FactionPoints = new(StringComparer.Ordinal);
     /// <summary>Groups the mod brought in, by platoon key: the game hour of their last defeat (they leave some hours after it).</summary>
     public Dictionary<ulong, double> SpawnDefeats = [];
+    /// <summary>
+    /// Brought-in groups waiting for their first-spawn check (platoon key): checked once they are loaded (his rule, 2026-11-23: a spawn that
+    /// comes out broken is replaced for its quest at once).
+    /// </summary>
+    public Dictionary<ulong, SpawnCheck> SpawnChecks = [];
+    /// <summary>Spawn groups (template ids) that came out broken, and how often in a row: 3 strikes and it is not brought in again in this
+    /// save; one good spawn clears them.</summary>
+    public Dictionary<string, int> SpawnStrikes = new(StringComparer.Ordinal);
 
     public long PointsWith(string faction) => FactionPoints.GetValueOrDefault(faction);
 
@@ -282,6 +349,21 @@ public sealed class GuildState
         foreach (var kv in SpawnDefeats.OrderBy(kv => kv.Key))
         {
             h.Add(kv.Key);
+            h.Add(kv.Value);
+        }
+        h.Add(SpawnChecks.Count);
+        foreach (var kv in SpawnChecks.OrderBy(kv => kv.Key))
+        {
+            h.Add(kv.Key);
+            h.Add(Rng.StableHash(kv.Value.Template));
+            h.Add(kv.Value.Quest);
+            h.Add(kv.Value.Hours);
+            h.Add(kv.Value.LoadedSeen);
+        }
+        h.Add(SpawnStrikes.Count);
+        foreach (var kv in SpawnStrikes.OrderBy(kv => kv.Key, StringComparer.Ordinal))
+        {
+            h.Add(Rng.StableHash(kv.Key));
             h.Add(kv.Value);
         }
         h.Add(NextId);
@@ -309,6 +391,8 @@ public sealed class GuildState
                 h.Add(o.GroupSize);
                 h.Add(o.PlatoonKey);
                 h.Add(o.StartsWar);
+                h.Add(o.Age);
+                h.Add(o.Strays);
             }
         }
     }
@@ -343,6 +427,15 @@ public sealed record TestRep(int Amount) : GuildCommand;
 
 /// <summary>Test channel only: brings every quest's deadline <paramref name="Hours"/> game hours closer, as if that much time had passed.</summary>
 public sealed record TestSkip(double Hours) : GuildCommand;
+
+/// <summary>Test channel only: logs each animal of quest <paramref name="QuestId"/>'s groups with its age, and the scores the mod reads.</summary>
+public sealed record TestHerd(int QuestId) : GuildCommand;
+
+/// <summary>Test channel only: sets the ages of quest <paramref name="QuestId"/>'s first group's animals, in order (the last age repeats).</summary>
+public sealed record TestSetAges(int QuestId, IReadOnlyList<float> Ages) : GuildCommand;
+
+/// <summary>Test channel only: treats quest <paramref name="QuestId"/>'s brought-in group as broken (strike, replacement).</summary>
+public sealed record TestBreakSpawn(int QuestId) : GuildCommand;
 
 /// <summary>Test channel only: counts kills for quest <paramref name="QuestId"/> until it is done.</summary>
 public sealed record TestFinish(int QuestId) : GuildCommand;

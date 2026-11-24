@@ -3,6 +3,7 @@
 // (a blow on someone already down doesn't count, so finishing off the downed, or butchering them, never does) in the last two minutes, and
 // who is now knocked out, dead, carried off by one of yours or locked up. Each person counts once per quest, and only for quests taken
 // before that blow, so a group left knocked out by an earlier quest can't be farmed for the next one.
+using System.Numerics;
 using Meitou.Simulation;
 using Meitou.Simulation.Bodies;
 using Meitou.Simulation.Combat;
@@ -160,6 +161,44 @@ public sealed partial class GuildSystem : ICombatHitObserver
             return;
         }
         for (int i = 0; i < 100 && !q.Done; i++) TestCount(world, q.TargetId);
+    }
+
+    /// <summary>
+    /// Test channel: each animal of the quest's groups (its own, else those marked for it) with its age and standing, and the scores the mod
+    /// reads from them: the whole group with real ages, the same group all adult, and the adults (age 0.6 and up, Kenshi's "Adult") alone.
+    /// </summary>
+    void TestHerdReport(World world, int id)
+    {
+        if (_s.Quests.FirstOrDefault(x => x.Id == id) is not { } q || Cat.FindTarget(q.Kind, q.TargetId) is not { } t)
+        {
+            RadiantQuestsMod.Log($"herd #{id}: no such quest");
+            return;
+        }
+        var key = Survey.Key(q.Kind, q.TargetId);
+        var groups = Access.Groups(world).Where(g => g.Tag == q.Tag).ToList();
+        if (groups.Count == 0)
+            groups = [.. Access.Groups(world).Where(g => g.Tag.Length == 0 && Survey.KeysOf(Cat, g).Contains(key)).OrderBy(g => Vector2.Distance(g.At, new(q.AnchorX, q.AnchorZ))).Take(1)];
+        foreach (var g in groups)
+        {
+            var ages = new List<string>();
+            var adults = new List<float>();
+            foreach (var m in Access.Members(world, g.Id))
+            {
+                float? age = WorldAccess.AgeOf(world, m.Id);
+                ages.Add($"{(age is { } a ? a.ToString("0.00") : "-")}{(m.Down ? " down" : "")}");
+                if (age is { } a2 && !m.Down && a2 >= 0.6f) adults.Add(a2);
+            }
+            double unit = t.Kind == Catalog.Cull ? Cat.UnitOf.GetValueOrDefault(t.Id, t.Unit) : t.Unit;
+            double real = Catalog.Fight(unit * g.Strength, g.Standing);
+            double allAdult = Catalog.Fight(unit, g.Standing);
+            double adultsOnly = adults.Count == 0 ? 0 : Catalog.Fight(unit * Math.Sqrt(adults.Average(a => Math.Pow(a, 1.5))), adults.Count);
+            RadiantQuestsMod.Log($"herd #{q.Id} {q.TargetName} ({g.TemplateId}, {(g.Tag == q.Tag ? "its own" : "nearest of its kind")}): "
+                + $"{g.Standing} standing, ages [{string.Join(", ", ages)}], mean age {g.Age:0.00}, strength x{g.Strength:0.00} | "
+                + $"score {real:0} ({Ranks.Name(Difficulty.RankOf(real))} {Difficulty.Band(real, Difficulty.RankOf(real))}); "
+                + $"all adult {allAdult:0} ({Ranks.Name(Difficulty.RankOf(allAdult))}); "
+                + $"its {adults.Count} adults alone {adultsOnly:0} ({Ranks.Name(Difficulty.RankOf(adultsOnly))}); quest rank {Ranks.Name(q.Rank)}");
+        }
+        if (groups.Count == 0) RadiantQuestsMod.Log($"herd #{q.Id}: no group of it in the world");
     }
 
     void HashDefeats(ref StateHasher h)

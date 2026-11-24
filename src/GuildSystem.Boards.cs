@@ -93,7 +93,8 @@ public sealed partial class GuildSystem
             : [];
         board.Offers = MakeTab(world, survey, Tab.General, giver, board.GiverFaction, Rank, dice, used, generalPools, notGeneral, brought);
         RadiantQuestsMod.Detail($"board for {TownName(board.Site)} (period {board.Day}, reroll {board.Rerolls}): {survey.Groups.Count} groups near, "
-            + $"{survey.Regions.Count} regions | " + string.Join("; ", board.Offers.Select(o => $"{Ranks.Name(o.Rank)} {o.Describe()}"))
+            + $"{survey.Regions.Count} regions | " + string.Join("; ", board.Offers.Select(o => $"{Ranks.Name(o.Rank)} {o.Describe()}"
+                + $" [score {o.Score:0}{(Math.Abs(o.Age - 1) > 0.01 ? $", mean age {o.Age:0.00}" : "")}]"))
             + " | faction: " + string.Join("; ", board.FactionOffers.Select(o => $"{Ranks.Name(o.Rank)} {o.Describe()}")));
     }
 
@@ -187,9 +188,10 @@ public sealed partial class GuildSystem
 
         foreach (var o in offers)
         {
-            var (cMin, cMax) = Ranks.Cats(o.Rank);
-            o.Cats = (long)Math.Round((cMin + dice.Double() * (cMax - cMin)) / 10) * 10;
-            o.Rep = (int)Math.Round(Ranks.Rep(o.Rank) * (0.85 + 0.3 * dice.Double()));
+            // The pay follows how hard it is within its rank (his rule, 2026-11-23: a very easy quest pays far less than a very hard one),
+            // with a small spread so two alike quests don't pay the same.
+            // The spread never leaves the rank's range, so a higher rank always pays more (his rule).
+            (o.Cats, o.Rep) = Difficulty.Pay(o.Score, o.Rank, dice.Double(), dice.Double());
             o.Relation = tab == Tab.Faction ? Ranks.Relation(o.Rank, Difficulty.Within(o.Score)) : 0;
             // A quest against a faction that isn't hostile to you yet starts a war with it: labelled, and pays more. Bandits and outlaws
             // attack on sight whatever their recorded relation says, so they never count.
@@ -227,7 +229,7 @@ public sealed partial class GuildSystem
         int ownSite = o.Kind == LairQuest.KindId ? (int)o.PlatoonKey : -1;
         foreach (var site in Access.SitesNear(at, DangerReach))
             if (site.Index != ownSite && Cat.Lairs.TryGetValue(site.TownId, out var lair) && HostileCamp(lair))
-                danger += Catalog.Fight(lair.Unit, lair.Residents);
+                danger += lair.Score;
         double score = o.Score + _set.DangerShare * danger;
         int rank = Math.Min(o.Rank + 1, Math.Min(Ranks.Top, Difficulty.RankOf(score)));
         if (rank > o.Rank)
@@ -243,7 +245,9 @@ public sealed partial class GuildSystem
     /// <summary>A group the quest itself is about (its group, or one of its kind of target): not extra danger.</summary>
     bool IsOwnTarget(Offer o, GroupInfo g)
     {
-        if (o.Group || o.Kind == GroupQuest.KindId) return g.Key == o.PlatoonKey || (g.FactionId is { } f && Cat.Head(f) == o.TargetId);
+        if (o.Group || o.Kind == GroupQuest.KindId)
+            return (o.PlatoonKey != 0 && g.Key == o.PlatoonKey) || (g.FactionId is { } f && Cat.Head(f) == o.TargetId)
+                || Survey.KeysOf(Cat, g).Contains(Survey.Key(Catalog.Hunt, o.TargetId));
         if (o.Kind == Catalog.Hunt) return Survey.KeysOf(Cat, g).Contains(Survey.Key(Catalog.Hunt, o.TargetId));
         if (o.Kind == Catalog.Cull) return g.FactionId is { } f2 && Cat.Head(f2) == o.TargetId;
         return false;
@@ -286,7 +290,10 @@ public sealed partial class GuildSystem
     static bool Pick(List<Candidate> pool, HashSet<string> used, List<Offer> offers, Dice dice)
     {
         if (pool.Count == 0) return false;
-        var from = pool.Where(c => !used.Contains(KeyOf(c.Offer))).ToList();
+        // At most one loner per tab (his rule, 2026-11-23).
+        bool lonerUp = offers.Any(IsLoner);
+        var from = pool.Where(c => !used.Contains(KeyOf(c.Offer)) && !(c.Offer.PlatoonKey != 0 && used.Contains(GroupKeyOf(c.Offer)))
+            && !(lonerUp && IsLoner(c.Offer))).ToList();
         // Each kind of quest gets a fair turn (a town with thirty kinds of animal around still shows its camps and groups): a kind first,
         // evenly among those with something to offer, then one of its offers by weight.
         var kinds = from.Select(c => c.Offer.Kind).Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
@@ -297,16 +304,23 @@ public sealed partial class GuildSystem
         if (i < 0) return false;
         var o = within[i].Offer;
         used.Add(KeyOf(o));
+        if (o.PlatoonKey != 0) used.Add(GroupKeyOf(o));
         offers.Add(Clone(o));
         return true;
     }
+
+    /// <summary>A "Defeat a ... Loner" offer: one person alone.</summary>
+    static bool IsLoner(Offer o) => o.Kind == Catalog.Cull && o.Need == 1 && o.GroupSize == 1;
+
+    /// <summary>The real group or camp an offer is about: one group is never the subject of two quests on a board (a hunt and a wipe-out).</summary>
+    static string GroupKeyOf(Offer o) => (o.Kind == LairQuest.KindId ? "camp:" : "group:") + o.PlatoonKey;
 
     /// <summary>
     /// What makes two offers the SAME quest (his rules, 2026-11-23): never twice on a board, within a tab or across both tabs. A quest on one
     /// specific group or camp is that group or camp (two "Wipe out" quests on different Dust Bandit groups are fine); any other quest is its
     /// kind and target at its rank (Defeat Starving Bandits at E once; at E and at D is fine). New quest types get this for free.
     /// </summary>
-    static string KeyOf(Offer o) => o.Group || o.Kind == GroupQuest.KindId ? "group:" + o.PlatoonKey
+    static string KeyOf(Offer o) => (o.Group || o.Kind == GroupQuest.KindId) && o.PlatoonKey != 0 ? "group:" + o.PlatoonKey
         : o.Kind == LairQuest.KindId ? "camp:" + o.PlatoonKey
         : o.Rank + ":" + o.Kind + ":" + o.TargetId;
 
@@ -314,6 +328,7 @@ public sealed partial class GuildSystem
     {
         Kind = o.Kind, TargetId = o.TargetId, TargetName = o.TargetName, Rank = o.Rank, Need = o.Need, Group = o.Group, GroupSize = o.GroupSize,
         PlatoonKey = o.PlatoonKey, Score = o.Score, Stray = o.Stray, HasAt = o.HasAt, AtX = o.AtX, AtZ = o.AtZ, Dangerous = o.Dangerous,
+        Age = o.Age, Strays = o.Strays,
     };
 
     /// <summary>

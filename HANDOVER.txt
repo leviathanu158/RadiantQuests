@@ -192,6 +192,154 @@ offers, reroll), counts with a grace margin, reachable spawns, honest markers; t
 ==========================================================================================
 7. NEXT STEPS (in rough order)
 ==========================================================================================
+STATE 0.8.12 (2026-11-24, installed, mod-check PASS): test channel "herd <quest>" (logs each animal's live age + scores: real, all adult,
+adults >= 0.6 alone) and "setages <quest> a b c ..." (sets the group's ages in order). VERIFIED IN GAME on the Hub Garru herd:
+real ages 0.68/0.22/0.16/0.20 -> 730 D (its one adult alone 309); set 1,1,0.05,0.05 -> 1802 C vs 2 adults alone 1398 D; set 0.6,0.6,0.2,0.2
+-> 988 vs 650; all adult 3564 C. Pups never lower a herd below its adults (his rule). His earlier "2 adults + 2 pups" was most likely this
+herd: one young adult (0.68) and three young ones.
+
+STATE 0.8.10-0.8.11 (2026-11-24, installed, mod-check PASS; FAILSAFES TESTED IN GAME on his vanilla save):
+ - Dialogue: Meitou's UiDialogueContext.Leave() ends the conversation (queues EndConversation): the guild reply line and the menu row's
+   talk now close the talk and open the guild window in one step. (GuildQuests, Workshop 3834435274, is a Meitou code mod whose receptionist
+   line comes from its own FCS dialogue; Meitou ends a talk at a line with no reply. We use the code hook instead: no data file.)
+ - SPAWN CLUSTER BUG found by the test: five quests' groups landed on one spot and fought (the Bloodraider loner died at once, its top-up
+   landed on the same spot). Fixed: RingSpot keeps SpawnSpacing 1500 from other brought-in groups; Quest.Spawns (hashed) in the spot seed.
+   Verified: new spawns kilometres apart.
+ - Board Detail log now shows each offer's [score, mean age]. His "4 Garru" herd here: mean age 0.32, score 730 (D).
+ - Test channel "skip <h>" also winds back SpawnDefeats, NearSince, LastContact, LastRefill. quick.ps1 accepts any clerk (was Squin only).
+ - VERIFIED IN GAME: (A) abandoned quest's never-fought brought-in group removed at the next cleanup; (B) brought-in group knocked out by
+   others -> "Someone else beat..." call-off, no penalty; kept while you are near even after 4 h; removed once you moved away;
+   (C) out of reach: standing ~900 from a herd for 1 h -> "can't be reached", given up, a new herd brought in and marked.
+ - Runs are started in the background now (foreground test commands got cut off when he sent a message).
+
+STATE 0.8.9 (2026-11-24, installed, mod-check PASS on his vanilla save): AGE MATH FIX from his report ("Hunt 4 Garru", 2 adults + 2 pups,
+rated E Very Hard, he got destroyed; "Hunt 2 Garru" adults was D on another board). GroupInfo.Strength = sqrt(mean(age^1.5)), so a score
+is u^2 x SUM(age^1.5) x n^0.35: adding a pup never lowers a herd, and the age penalty is milder (was mean(age^1.5) squared = age^3).
+Vanilla numbers (catalog check): Garru unit 23.4 (1 = D 548, 2 = D 1398), Cannibals 5.6 (3 = E 137 "Very Hard": weak, so easy in
+absolute terms - Very Hard is only within E). Boards already made keep their old offers until refresh/reroll.
+
+STATE 0.8.8 (2026-11-24, built, NOT installed yet - his game was open): the menu row now acts as talking to the clerk (his rule): the
+game's own TalkOrder (first selected character walks up, counters handled by Meitou), and when that conversation opens the guild window
+opens over it. Every conversation with a guild clerk gets the reply "I'm looking for guild work. (Adventurers' Guild)" (UiRegistration
+.AddDialogueReplies; Meitou has no command to close a conversation, so the window sits over it). GuildView.ClerksNear removed (0.8.7's
+300-unit "near" opened the window from ~30 m without walking). He confirmed: the grace-margin removal works; font steps "good enough".
+
+STATE 0.8.6-0.8.7 (2026-11-24, his requests; built, mod-check PASS on "Mostly vanilla Test save"; HE TESTS UI HIMSELF):
+ - GRACE MARGIN GONE: hunt/defeat count = the whole group (CountQuest.Keep = size), wipe-out = whole group (Share = size), no "(group of
+   N)"/"(N needed)", no "close enough"; settings CountMargin and GroupShare removed. Camp stragglers keep a fixed 3/4 ("most down").
+ - WINDOWS (WindowLayout.cs, window-layout.json in the mod folder; survives reinstall and reloads - he confirmed): tracker, guild window
+   and journal move (title bar / tracker "::" grip), resize ("//" corner grip), lists scroll (UiNodeKind.ScrollView). A-/A+ step
+   through Kenshi's four standard fonts (Small, MediumSmall, Medium, Large) via per-step styles: 0.8.6 used node TextScale, which
+   only changed row spacing (his report). Setting "Window backgrounds" (default on) removes the dark backgrounds.
+ - "Adventurers' Guild" menu row on any clerk at any distance (his rule): near one of yours (GuildView.ClerksNear, ClerkReach 300)
+   opens at once; else MoveOrder for the selected characters to the clerk and the window opens on arrival (5 min real-time limit).
+   He saw the row only within range before; cause not pinned (the row only needs the clerk in view.Clerks) - ask him if it persists.
+ - test\pick-save.ps1: ranks saves by match with the current mod list (his rule: test on the closest save). Memory notes added.
+
+STATE 0.8.5 (2026-11-23, from his VANILLA play test ("Mostly vanilla Test save", feedback file items 1-10); mod-check PASS on it):
+ - CLERKS ARE LIVE (#1): ScanClerks no longer needs the owner in the start-time guild-faction list. Any TOWN/VILLAGE (current record, so
+   takeovers switch owner) with a bar (else shop/HQ) whose current owner and barman faction aren't hostile to you, not your own. Vanilla
+   failed before: The Hub's owner Holy Nation Outlaws is FundamentalType Bandit; Mongrel's TOWN record lists no bar squad. Verified in
+   game: Hub, Mongrel, Shark, Admag, Stack, Bad Teeth, Heng, World's End, Spring, Black Scratch, Catun all have clerks. (Several bars in
+   a town = several clerks.)
+ - GENERAL vs FACTION (#9): a faction owning settled towns (bar/shop/HQ: Southern Hive) is never a General target unless bandit-type;
+   still a Faction-tab war target (WarTargets unchanged). Vanilla General targets 27 -> 26.
+ - CAMPS (#10): unique residents now count (Lair.Named: each one's Fight(unit,1) on top of the crowd). Dust King Tower 2230 -> 3051,
+   still C (Hard). Offer boss extra weight if he still finds it low.
+ - #3 CONFIRMED: autosave1 had quest #8 "Wipe out a group of 3 Cannibals", Stray=true, Spawned=true (the out-of-region roll works); its
+   group was still in the world then (removal waits 3.5 h + you >3000 away). Removal unverified: his Debug log was off; Debug now ON in
+   his meitou.user.json (radiantquests.Debug, backup meitou.user.json.bak-rq), mod default stays off (his wish).
+ - OPEN from that file: #6 tracker/windows movable and resizable, text cut off (Meitou UI now has Pointer Drag events and ScrollView:
+   doable); #5 pay feels middling (wait for the rep store); #10 bounty/leader quests need his design input (named bosses excluded from
+   other quests? faction-leader kills as top-rank Faction work that shifts the world).
+ - Test tools: CatalogCheck RQ_TOWNS="name,name" prints owner/type/guild/bars and camp scores.
+
+NEXT (his request, 2026-11-23, not started): DROP THE GRACE MARGIN. He no longer likes it; the failsafes (top-ups, broken-spawn
+replacement, out-of-reach, call-offs, shorten) cover what it was for. "Wipe out a group" must mean the WHOLE group (no "(N needed)",
+GroupShare gone or 1.0). He leans the same way for hunt/defeat counts ("adds convolution that is not necessary"): count = the whole group,
+no "(group of N)" text. Touch: CountQuest.Keep / CountMargin (and "close enough" in Track, grace there), GroupQuest.Share / GroupShare,
+Quest.Describe texts, Usable, scenario expectations. Confirm with him whether hunts/defeats go whole too (likely yes).
+
+STATE 0.8.4 (2026-11-23, his rules; mod-check PASS, FULL SCENARIO 26/26 PASS, strays and broken-spawn path tested in game):
+ - STRAYS (E and D, pack animals, needs the spawn cap): 2-4 animals below the smallest whole pack (StraySizes), "Hunt 2 Goat (strays)",
+   count = all of them. Fills the thin low ranks (Squin D went from 2 to 7 offers).
+ - BROKEN/TEST GROUPS, three layers:
+   1. Start (Catalog.BrokenGroup): no member exists, an ANIMAL with no known race (people get their race from the faction: an early
+      version checked people too and cut 755 good groups - caught offline, never shipped), or a group/member name with test, debug,
+      dummy, placeholder, unused, deprecated, WIP, "do not use". His load order: only Jackles.mod's "_aggression test" group (5 notes).
+   2. Play (GuildSystem.CheckSpawns, every 10 s in SlowWorld): each brought-in group is checked on its 2nd look after loading
+      (WorldAccess.GroupProblem: nobody in the world, under half there, a member under the ground or 200 up). Broken -> its quest gives it
+      up at once and RETRIES THE SAME GROUP AT A NEW SPOT (his idea; seed includes Retries/Skipped), replaced whole; strike for the
+      template; 3 strikes in a row -> not used again this save (GuildState.SpawnStrikes, hashed/saved); a good spawn clears strikes.
+      At most Quest.MostRetries (5) replacements per quest; retries are spaced (check 10 s + track 5 s): no burst. Count quests'
+      "beaten by someone else" no longer fires for a given-up group. Wipe-out quests replace too.
+   3. Overrides: "nospawn" / "allowspawn" (template, faction or race ids).
+ - Kinds whose groups have no spawn regions can now come through the rare out-of-region roll (Survey.AnyTemplates).
+ - At most 1 loner per tab.
+ - Test channel: "breakspawn <quest id>" (same path as a real broken spawn). Verified 3 breaks -> strikes 1-3 -> another group used.
+
+STATE 0.8.3 (2026-11-23): at most 1 loner per tab (his rule; Pick skips loners once one is up). Built, not game-tested (one-line rule).
+FINDING (variety): only 7 of 232 kinds lack spawn regions (5 animals incl. Naked Beak Thing, Iron Roach, Winged Beak Ogre; Medics Guild,
+Temple of truth) - not the main cause. Low ranks are thin because of ruleset v3's floor (half the usual group): most pack animals no
+longer fit E (goats >= 5 = D). Squin: General E local 2 / strays 3, Faction E 0; B has 23 local / 68 strays. Options put to him (below).
+Proposed for broken mod creatures: data checks at start + a first-spawn check in play (quarantine a template that comes out broken,
+saved) + the overrides file; region-less kinds only through the out-of-region roll. Awaiting his answer.
+
+STATE 0.8.2 (2026-11-23, his RULESET v3 for group sizes and spawns; mod-check PASS, FULL SCENARIO 26/26 PASS on nightly 20261124):
+ - Sizes of brought-in groups (Catalog.SpawnRange, CountQuest.BroughtSizes): people 1..most the game rolls; animals living alone or in
+   pairs (usual <= 2) 1-2; other animals from half their usual group (rounded up, never below 2) to the most. Each offer rolls a RANDOM
+   size among those that fit the rank (seeded with the board: reload-proof). Hunts/defeats up to 15; bigger = wipe-out.
+ - Loners: a people quest of one ("Defeat a Dust Bandit Loner", a/an): no set chance, any rank (strong loners rank high by strength).
+   Real lone wanderers read the same. Observed: at E the faction tab can be mostly loners (strong factions only fit E alone).
+ - Wipe-out quests can be brought in (GroupQuest: people from 3, animal herds over 15 on the General tab; real animal herds over 15 too).
+   Accept spawns at the planned size and refits count/pay. KeyOf: a group key only for a real group (PlatoonKey != 0).
+ - Top-ups: what is missing, but a pack animal (PackOf > 2) never alone: at least 2, half the time one more; people/solitary exact.
+ - Spawn placement (GuildSystem.RingSpot + WorldAccess.SpotProblem): kind's own regions (any wild one for strays), out of sight of all
+   your characters (SightReach 3000; still marked on the map at once), walkable, dry ground at the spot and 8 points at 150 (no
+   water/island/shore), not steep (rise <= 110 within 150), navmesh straight line unbroken 800 toward the town (Walkability.LineOfSight,
+   tick-safe; Meitou says FindPath must never run inside a tick, so NO route search). The game places the group within 120 of the
+   checked spot (was 1500). Logs "no spawn spot ... (last: why)" when nothing passes. Spot check guarded as Area.Ground (off = accept).
+ - Markers: a quest shows its own group; other groups of the kind only when its own can't cover what's needed (a loner was 5 markers).
+ - scenario.ps1: board check now "E has its minimum 3, at most 7" (ranks above yours are rolls); lair regex skips locked offers with
+   "+Nrel" before "locked".
+
+STATE 0.8.1 (2026-11-23): built against nightly 0.22.2-nightly.20261124 (commit 1514e933, build.ps1 $wantVersion updated; KenshiRef
+checked out there). It HAS the spawn size cap (PR #1324): log "group size cap: on"; verified brought-in groups come at exactly the planned
+size (crop louse 10/10, goats 2/2, crawler 1/1). With the cap, board sizes use each template's fewest (GroupSizes). mod-check PASS.
+ - His call: NO age words in quest text (herds are mixed); ages count in difficulty and pay only. Brought-in animals still made adult
+   when their ages would change the rank.
+ - His note: marking target groups near your squad outside the quest area (NearYou 2500) is TENTATIVE: may clutter; revisit if so.
+
+STATE 0.8.0 (2026-11-23, from his play-test file "Problems identified for Radiant Quests.txt" and his answers; mod-check PASS,
+quick-tested on rqtest (board, two accepts, tracking, journal and window screenshots); FULL SCENARIO NOT RUN YET):
+ - Hunt/Defeat quests are about ONE WHOLE GROUP: a real group near town (tagged when taken: marked wherever it wanders) or one brought in
+   at accept. Count = group size less the margin (25%: 6 -> 5); text "Hunt 5 Springbok (group of 6)". At most 15 (Catalog.MostCount).
+   One group is never the subject of two quests on a board (Pick's GroupKeyOf). Old CountsFor/GroupCounts are gone.
+ - Meitou PR #1324 (spawn size cap) was MERGED 2026-11-24 but is not in nightly 20261123.2. WorldAccess finds the 9-parameter
+   SpawnPlatoon by reflection and uses it when there ("group size cap: on/not in this Meitou yet" in the log). Without it, a brought-in
+   group that comes out bigger than the rank is skipped (cleanup removes it) and another tried; the last try is kept with count AND pay
+   refitted (CountQuest.Refit, pay by Difficulty.CatsAt/RepAt). Verified: crawlers wanted 3 came as 2 -> quest 2; springbok 5 -> 6.
+ - Fight = unit^2 x count^1.35 (Catalog.CountWeight; his call: 32 starving bandits a hard D, not B).
+ - Difficulty words within a rank (his choice: words, no numbers): Very Easy/Easy/Medium/Hard/Very Hard = fifths of the band
+   (Difficulty.Band). Pay follows it: cats across the rank's whole range, rep 85-115%; rank ranges no longer overlap, the spread is
+   clamped inside the range (his rule: the easiest D always pays more than the hardest E). Quest.Score kept (hashed) for this.
+ - Animal age (Kenshi: age = stat multiplier; <0.4 pup, <0.6 young, >1.1 elder): GroupInfo.Age/Strength (mean age^1.5) from loaded
+   members; real groups ranked with it; text "(pups)/(young)/(elders)"; brought-in animals whose ages would change the rank are set
+   adult once (BodySystem.SetAnimalAge, Quest.Aged).
+ - Shortfall order (his rule): top-up spawn first, then shorten ("close enough" only once you did part of it). Fixes the "Hunt 1, 1 can't
+   be found, close enough" loop (grace was >= 1 with nothing done). Abandoning a quest with nothing marked and nothing done is free.
+ - Markers: also groups of the target near one of yours (2500) outside the quest area (you followed them; any of them counts).
+ - "Taken" offers: a refused accept also marked the offer taken; taken offers are now hidden from the board.
+ - UI: offers and your quests in pages of 6 (Previous/Next); taller window; toasts 1000 wide. QUEST JOURNAL: key G (Meitou/MC/PZA leave
+   it free; rebindable) or click the tracker's title; all quests, two lines each, abandon. His rule: NO HUD button (other mods would
+   clutter it). A tab in the Map/Research window would need a Meitou hook (none yet).
+ - #6 (springbok shot by crossbow not counted): Meitou does report bolt hits (CombatHitSource.Projectile), so not the crossbow; likely it
+   was outside the old quest area or the fog mist finished it. Watch for it in play.
+ - TestChannel: "journal" toggles the journal. CatalogCheck prints fighter strengths and scores per count.
+ - FULL SCENARIO on 0.8.0: 24/25 PASS. The one FAIL ("lair quest is marked") was the test's regex running past the board into the
+   faction board and taking a LOCKED camp offer; fixed in scenario.ps1 ([^|;]). Knockout check skipped (Manual Combat ticked).
+ - NEXT: his play test.
+
 STATE 0.7.11 (2026-11-24): CLEANUP + OPTIMISATION, behaviour unchanged (catalog check identical, mod-check PASS, FULL SCENARIO 26/26 PASS):
  - WorldAccess.Groups is built once per tick and shared (IReadOnlyList), renewed after Spawn/TagGroup/ReleaseNatural/Despawn.
  - KillQuests.Track: one group pass (groups / marked / standing). Catalog.FindTarget + IsOutlaw: dictionary lookups replace list
