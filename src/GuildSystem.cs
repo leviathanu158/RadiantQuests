@@ -110,6 +110,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                     case HandIn h: HandInQuest(world, h); break;
                     case Abandon a: AbandonQuest(world, a.QuestId); break;
                     case BuyRumour br: BuyBetterRumour(world, br); break;
+                    case AskTownsfolk at: AskTown(world, at); break;
                     case ShowHandIn sh: OpenHandIn(world, sh.Clerk, sh.QuestId); break;
                     case HandInPicked hp: HandInPick(world, hp); break;
                     case ToggleMarkers tm:
@@ -379,9 +380,9 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         _dirty = true;
         if (!type.Accept(world, this, q, offer, new Vector2(clerk.Position.X, clerk.Position.Z))) return;
         q.FullNeed = q.Need;
-        if (HasRumours(q))
+        if (HasRumours(q) && !IsFight(q))
         {
-            q.Rumour = RumourOf(world, q, 0);
+            Heard(q, RumourOf(world, q, 0));
             RadiantQuestsMod.Detail($"quest #{q.Id} rumour: {q.Rumour}");
         }
         _s.NextId++;
@@ -514,6 +515,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             var markers = new List<Vector2>();
             var result = type.Track(world, this, q, markers);
             _markers[q.Id] = markers;
+            FightNews(world, q, markers);
             if (result == TrackResult.CallOff)
             {
                 End(world, q);
@@ -869,6 +871,16 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// <summary>Publishes the view at once (between ticks, after the paused interface's commands).</summary>
     public void PublishNow(World world) => Publish(world);
 
+    /// <summary>
+    /// The markers a quest shows (his rule, 2026-11-25): a fight's targets only once one of yours is close (NearReveal), unless the "Fight
+    /// markers always" setting is on; every other quest's (a parcel's town, a camp, a stolen parcel) always.
+    /// </summary>
+    IEnumerable<Vector2> Shown(World world, Quest q, List<Vector2> at) =>
+        !IsFight(q) || RadiantQuestsMod.Settings.FightMarkersAlways ? at : at.Where(m => Access.YoursNearPoint(world, m, NearReveal));
+
+    /// <summary>How near one of yours must be for a fight's target to be marked (units).</summary>
+    const float NearReveal = 4000;
+
     void Publish(World world)
     {
         RefreshHandIn(world);
@@ -878,7 +890,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         var quests = _s.Quests.Select(q => new QuestView(q.Id, q.DescribeWithBest(), q.Rank, q.Have, q.Need,
             q.Deadline >= double.MaxValue / 2 ? double.PositiveInfinity : q.Deadline - world.GameHours, q.CatsNow, q.RepNow, q.Done, q.General,
             Cat.FactionNames.GetValueOrDefault(q.GiverFaction, q.GiverFaction),
-            q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. at] : [], q.TargetId, Difficulty.Band(q.Score, q.Rank), TownName(q.Site),
+            q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. Shown(world, q, at)] : [], q.TargetId, Difficulty.Band(q.Score, q.Rank), TownName(q.Site),
             q.General ? 0 : (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * q.PayShare))
             { Kind = q.Kind, Site = q.Site, Rumour = q.Rumour, RumourCost = HasRumours(q) && q.RumourLevel < MostRumour && !q.Done ? RumourCost(q) : 0, MarkersHidden = q.MarkersHidden }).ToList();
         var boards = new Dictionary<int, BoardView>();

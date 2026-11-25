@@ -223,9 +223,36 @@ public sealed class GuildUi : IUiExtension
     /// for the first selected character, so it walks up as for any conversation (counters included); when the conversation opens, the guild
     /// window opens over it (DialogueReplies).
     /// </summary>
+    /// <summary>The townsperson one of yours was sent to ask about guild work (the row below), and until when (host clock).</summary>
+    static Meitou.Simulation.CharacterId s_askingTo;
+    static long s_askUntil;
+
+    /// <summary>Whether you hold quests a townsperson could have heard of.</summary>
+    static bool Askable(GuildView view) => view.Quests.Any(q => !q.Done && q.Rumour.Length > 0);
+
     static IEnumerable<UiMenuVerb> Verbs(UiMenuContext m)
     {
-        if (GuildSystem.View is not { } view || !view.Clerks.TryGetValue(m.Target.Id, out var clerk)) return [];
+        if (GuildSystem.View is not { } v) return [];
+        // Townsfolk (his rule, 2026-11-25): free but vague news of your work. Anyone not yours, not an animal, not hostile, not down.
+        if (!v.Clerks.ContainsKey(m.Target.Id))
+        {
+            var t = m.Target;
+            if (t.IsPlayer || t.Animal || t.HostileToPlayer || t.Down || !Askable(v)) return [];
+            var who = m.Selected.ToList();
+            return [new UiMenuVerb("Ask about guild work", () =>
+            {
+                if (who.Count == 0)
+                {
+                    RadiantQuestsMod.Toast("Select a character to ask.");
+                    return;
+                }
+                m.Enqueue(new Meitou.Simulation.Dialogue.TalkOrder(who[0], t.Id) { Tick = m.Tick });
+                s_askingTo = t.Id;
+                s_askUntil = Environment.TickCount64 + 5 * 60 * 1000;
+            })];
+        }
+        var view = v;
+        if (!view.Clerks.TryGetValue(m.Target.Id, out var clerk)) return [];
         var selected = m.Selected.ToList();
         return [new UiMenuVerb("Adventurers' Guild", () =>
         {
@@ -247,7 +274,27 @@ public sealed class GuildUi : IUiExtension
     /// </summary>
     static IEnumerable<UiDialogueReply> Replies(UiDialogueContext d)
     {
-        if (GuildSystem.View is not { } view || !view.Clerks.TryGetValue(d.Conversation.Npc, out var clerk)) yield break;
+        if (GuildSystem.View is not { } view) yield break;
+        // A townsperson: sent to ask (the menu row) answers at once; else a reply line to ask them.
+        if (!view.Clerks.ContainsKey(d.Conversation.Npc))
+        {
+            var npc = d.Conversation.Npc;
+            if (s_askingTo == npc && Environment.TickCount64 <= s_askUntil)
+            {
+                s_askingTo = default;
+                d.Leave();
+                Send(new AskTownsfolk(npc) { Tick = Tick });
+                yield break;
+            }
+            if (!Askable(view)) yield break;
+            yield return new UiDialogueReply("Heard anything about the work I'm on? (Guild)", () =>
+            {
+                d.Leave();
+                Send(new AskTownsfolk(npc) { Tick = Tick });
+            });
+            yield break;
+        }
+        var clerk = view.Clerks[d.Conversation.Npc];
         if (s_walkingTo == clerk.Id && !s_open)
         {
             s_walkingTo = default;
@@ -628,11 +675,12 @@ public sealed class GuildUi : IUiExtension
             box.Children.Add(top);
             string who = q.General ? $"Guild work, taken in {q.Town}" : $"For {q.GiverName}, taken in {q.Town}";
             string pay = $"{q.Cats} cats, {q.Rep} rep" + (q.General ? "" : $" + {q.Rep} points" + (q.Relation > 0 ? $", relations +{q.Relation}" : ""));
-            bool items = q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find;
+            // Quests found by rumour (goods, and fights whose markers show only when close) say what was heard instead.
+            bool items = q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find || q.Rumour.Length > 0;
             string where = q.Done || items ? "" : q.Targets.Count > 0 ? (q.MarkersHidden ? "   ·   markers hidden" : "   ·   marked on the map")
                 : "   ·   none found nearby (abandoning is free)";
             box.Children.Add(Label($"rq-j{q.Id}d", $"      {who}   ·   {pay}{where}", _dim[lv], small));
-            if (rumour) box.Children.Add(Label($"rq-j{q.Id}r", $"      Rumour: {q.Rumour}" + (q.RumourCost > 0 ? "  (a clerk can tell you more)" : ""), _dim[lv], small));
+            if (rumour) box.Children.Add(Label($"rq-j{q.Id}r", $"      Heard: {q.Rumour}" + (q.RumourCost > 0 ? "  (a clerk can tell you more)" : ""), _dim[lv], small));
             list.Children.Add(box);
         }
         body.Children.Add(list);

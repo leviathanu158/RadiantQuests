@@ -219,6 +219,12 @@ public sealed class Quest
     /// parts). Once any are in, the quest can't fail: abandoned or out of time it pays the share delivered.
     /// </summary>
     public int Delivered;
+    /// <summary>What you have heard of the quest, newest last (day-stamped lines; at most 6): the journal's "heard" log.</summary>
+    public List<string> RumourLog = [];
+    /// <summary>Fight quests: when one of yours last saw a target (game hours; below 0: never). The place is SeenX/SeenZ.</summary>
+    public double SightHours = -1;
+    /// <summary>When townsfolk last told something of this quest (game hours; one answer per quest per few hours).</summary>
+    public double TownAskHours = -1;
     /// <summary>Test channel only: the next ambush roll hits, wherever the courier is.</summary>
     public bool ForceAmbush;
     /// <summary>Item quests: what the clerk told you of where to get it (kept, so it can be read again), and how good it is (0 free, 1, 2).</summary>
@@ -394,6 +400,10 @@ public sealed class Quest
         h.Add(Best);
         h.Add(ForceAmbush);
         h.Add(Delivered);
+        h.Add(RumourLog.Count);
+        foreach (var line in RumourLog) h.Add(Rng.StableHash(line));
+        h.Add(SightHours);
+        h.Add(TownAskHours);
         h.Add(Rng.StableHash(Rumour));
         h.Add(RumourLevel);
         h.Add(MarkersHidden);
@@ -534,6 +544,9 @@ public sealed record ShowHandIn(CharacterId Clerk, int QuestId) : GuildCommand;
 
 /// <summary>Hand in the goods picked in the pick window (their keys in its list).</summary>
 public sealed record HandInPicked(CharacterId Clerk, int QuestId, IReadOnlyList<string> Ids) : GuildCommand;
+
+/// <summary>Ask a townsperson what they have heard of your guild work (free, vague; his rule 2026-11-25).</summary>
+public sealed record AskTownsfolk(CharacterId Npc) : GuildCommand;
 
 /// <summary>Hide or show a quest's markers on the map.</summary>
 public sealed record ToggleMarkers(int QuestId) : GuildCommand;

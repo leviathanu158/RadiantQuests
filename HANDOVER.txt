@@ -248,6 +248,33 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.0 (2026-11-25, FIGHT-QUEST RUMOURS, his decisions): GuildSystem.Rumours: IsFight (hunt, cull, group; a camp to clear keeps its
+marker); FightRumour levels 0 (free/townsfolk) "Day N: Carrion Crawler were seen close to Squin.", 1 (+ way and region), 2 (+ nearest
+named place, never the quest's own town), from where the targets are NOW when told; FightNews each look: first rumour once targets are
+known, "Day N: your squad saw X, in <region>, near <place>" when one of yours is within sight (logged at most every 2 h);
+Quest.RumourLog (newest 6, hashed), SightHours, TownAskHours. Markers: GuildSystem.Shown hides a fight's markers unless one of yours is
+within NearReveal 4000 (setting "Fight markers always" shows them). Townsfolk: right-click "Ask about guild work" on anyone not yours,
+not an animal, not hostile, not down (TalkOrder, answered when the talk starts) and a dialogue reply "Heard anything about the work I'm
+on? (Guild)"; AskTownsfolk: per quest half the time, once per 6 game hours per quest, a level-0 fresh rumour (goods: the general word
+unless a better one was bought). Journal line "Heard: ...". Test channel: asktown (the open clerk stands in). TESTED on "Hand in Bug":
+first rumour, two paid levels (-30c, -70c), townsfolk "Barman Bisera hasn't heard anything"; markers hidden when far; mod-check PASS.
+NOT TESTED: the marker appearing when near, the squad-sighting line, the townsfolk menu row/reply (UI: HE CHECKS).
+
+PLAN AGREED 2026-11-25 (his "Direction for radiant quests" + Claude's changes): 1) finish the framework: RUMOURS for most quests,
+the untested fixes (loners, partial group pay, town spawns, ambush cap/kinds, parcel win-back, courier delivery, sneaking courier),
+known gaps (empty recover camps, board-mix numbers as settings, performance on his full list); 2) a PUBLIC TEST RELEASE (Workshop or
+Discord; check whether Meitou code mods ship through the Workshop); 3) PROGRESSION PACKAGE designed together: barrier of entry, rank-up
+challenges and rewards, rep store; 4) faction quest expansion (unique, impactful); 5) feasibility check for custom NPCs/buildings, then
+them, then the dark guild (smuggling, illegal work); 6) variety throughout.
+RUMOURS FOR FIGHT QUESTS (his decisions 2026-11-25): a dated "last seen" rumour instead of a marker; the MARKER APPEARS WHEN ONE OF
+YOURS GETS CLOSE to the target (setting can show them always, for testing); your squad seeing the target updates the rumour ("Last seen
+by your squad"); fresher news from the clerk FOR CATS ("Ask more"); TOWNSFOLK give free but vague news (a right-click "Ask about guild
+work" row on people in towns); a dated log per quest in the journal. Courier destination, recover camp, clear-camp and a stolen parcel
+keep their markers. THE WASTELAND REMEMBERS (workshop 3839368189, [Meitou] code mod "LivingWastelandMeitou", compiled only; its
+manifest caps gameVersion <0.23.0 so it doesn't load on Meitou 0.23 yet): YES, send our quest news to it when installed (its public API
+for other mods' news, read by reflection), with a ruleset that makes it as immersive and interesting as possible; design it once its
+API can be read (it has "news from other mods", "heard"/"seen" knowledge, ask-for-news rows, dated news; study it, don't copy).
+
 STATE 0.9.9 (2026-11-25, his design: PARTIAL HAND-INS; and the inventory closes on Hand in): Quest.Delivered (hashed). Hand in is
 usable from one picked item; fewer than still needed = a partial delivery (GuildSystem.HandInPick: taken, Delivered += n, no pay yet);
 item quests' Have = Delivered + carried; the final hand-in takes only what is still missing (BringItemsQuest.HandIn) and pays the full

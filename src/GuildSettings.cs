@@ -36,6 +36,11 @@ public sealed class GuildSettings
     [Setting("Map markers", SubGroup = "Features", Hint = "Marks the nearest groups of each quest's target on the world map.")]
     public bool MapMarkers { get; set; } = true;
 
+    // (His rule, 2026-11-25: fight quests are found by rumour; their marker shows once one of yours is close. This shows them always.)
+    [Setting("Fight markers always", SubGroup = "Features",
+        Hint = "Off (default): hunt and kill targets are found by rumour, and marked only once one of your characters is close. On: always marked (for testing, or if you prefer).")]
+    public bool FightMarkersAlways { get; set; }
+
     [Setting("Rep for rank D", Min = 5, Max = 2000, Step = 5, SubGroup = "Ranks",
         // (His defaults: 2026-11-24 two thirds of the earlier ones, his call after play: ~10 quests of a rank for D and C, ~7-10 of the rank below later.)
         Hint = "Lifetime rep needed for rank D (you start at E; about 10 E quests). Each later rank needs about 7 to 10 quests of the rank below. Spending rep at the store never lowers your rank.")]

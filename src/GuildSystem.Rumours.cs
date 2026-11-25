@@ -17,7 +17,22 @@ public sealed partial class GuildSystem
     const int MostRumour = 2;
 
     /// <summary>Whether a quest's goods need finding (supply, gear, find): those get rumours.</summary>
-    static bool HasRumours(Quest q) => q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find;
+    static bool HasRumours(Quest q) => q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find || IsFight(q);
+
+    /// <summary>Hunts and kills (found by rumour, his rule 2026-11-25); a camp to clear keeps its marker.</summary>
+    public static bool IsFight(Quest q) => q.Kind is Catalog.Hunt or Catalog.Cull or GroupQuest.KindId;
+
+    /// <summary>The day of the game (1 = the first).</summary>
+    static int Day(World world) => (int)Math.Floor(world.GameHours / 24) + 1;
+
+    /// <summary>Adds a line to the quest's "heard" log (day-stamped; the newest 6 are kept) and makes it the rumour shown.</summary>
+    static void Heard(Quest q, string line)
+    {
+        q.Rumour = line;
+        if (q.RumourLog.Count > 0 && q.RumourLog[^1] == line) return;
+        q.RumourLog.Add(line);
+        if (q.RumourLog.Count > 6) q.RumourLog.RemoveAt(0);
+    }
 
     /// <summary>What the next better rumour costs: a tenth of the quest's pay, then a quarter (at least 20 cats, in tens).</summary>
     static long RumourCost(Quest q) => Math.Max(20, (long)Math.Round(q.CatsNow * (q.RumourLevel == 0 ? 0.10 : 0.25) / 10) * 10);
@@ -39,7 +54,7 @@ public sealed partial class GuildSystem
         }
         Access.Pay(world, -cost);
         q.RumourLevel++;
-        q.Rumour = RumourOf(world, q, q.RumourLevel);
+        Heard(q, RumourOf(world, q, q.RumourLevel));
         _dirty = true;
         RadiantQuestsMod.Toast($"-{cost} cats. {q.Rumour}");
     }
@@ -47,6 +62,7 @@ public sealed partial class GuildSystem
     /// <summary>The rumour of level <paramref name="level"/> for a quest's goods, heard at the clerk where it was taken.</summary>
     string RumourOf(World world, Quest q, int level)
     {
+        if (IsFight(q)) return FightRumour(world, q, level);
         var from = new Vector2(q.AnchorX, q.AnchorZ);
         var members = ItemCat.MembersOf(q.TargetId);
         if (q.MinWorth > 0)
@@ -142,6 +158,82 @@ public sealed partial class GuildSystem
                         regions.AddRange(rs);
         return [.. regions.Distinct(StringComparer.Ordinal).OrderBy(r => r == hereRegion ? 0 : 1).ThenBy(r => r, StringComparer.Ordinal)
             .Select(r => _data.Db.Find(r)?.Name?.Trim() ?? "").Where(n => n.Length > 0).Take(2)];
+    }
+
+    /// <summary>What a fight quest is after, as people say it: "Fell Hyena", "Dust Bandits", "the Dust Bandit Loner", "a group of 7 Dust Bandits".</summary>
+    static string Who(Quest q) => CountQuest.IsLoner(q) ? "the " + Quest.LonerName(q.TargetName)
+        : q.Kind == GroupQuest.KindId ? $"a group of {q.GroupSize} {q.TargetName}" : q.TargetName;
+
+    /// <summary>
+    /// A fight quest's rumour (his rules, 2026-11-25), from where its targets are NOW (the news is fresh when told; it doesn't follow them
+    /// after): 0 (free, townsfolk): roughly where; 1: the way and the region; 2: the nearest named place. Day-stamped.
+    /// </summary>
+    string FightRumour(World world, Quest q, int level)
+    {
+        var from = new Vector2(q.AnchorX, q.AnchorZ);
+        string day = $"Day {Day(world)}: ";
+        if (!_markers.TryGetValue(q.Id, out var seen) || seen.Count == 0) return day + $"nobody has seen {Who(q)} lately.";
+        var at = seen.OrderBy(m => Vector2.Distance(m, from)).First();
+        string town = TownName(q.Site).Trim();
+        string near = Landmark(at, q.Site);
+        return level switch
+        {
+            0 => day + $"{Who(q)} were seen {FarFrom(at, from, town)}.",
+            1 => day + $"{Who(q)} were seen {FarFrom(at, from, town)}, to the {Way(at, from)}{InRegion(at)}.",
+            _ => day + $"{Who(q)} were seen {FarFrom(at, from, town)}, to the {Way(at, from)}{InRegion(at)}{near}.",
+        };
+    }
+
+    /// <summary>", near Shark" (the nearest named place within 8000 units, never <paramref name="skip"/>: the quest's own town), or "".</summary>
+    string Landmark(Vector2 at, int skip = -1) => Access.SitesNear(at, 8000).Where(s => s.Index != skip)
+        .OrderBy(s => Vector2.Distance(s.At, at)).FirstOrDefault() is { } site ? $", near {site.Name.Trim()}" : "";
+
+    /// <summary>"close to Squin", "some way from Squin", "far from Squin", by the straight distance.</summary>
+    static string FarFrom(Vector2 at, Vector2 from, string town) => Vector2.Distance(at, from) switch
+    {
+        < 25000 => $"close to {town}",
+        < 70000 => $"some way from {town}",
+        _ => $"far from {town}",
+    };
+
+    /// <summary>
+    /// Fight quests (each look): the first rumour once the targets are known; and when one of yours sees a target (within sight), a fresh
+    /// line "your squad saw them" (logged at most every two game hours).
+    /// </summary>
+    void FightNews(World world, Quest q, List<Vector2> markers)
+    {
+        if (!IsFight(q) || q.Done) return;
+        if (q.Rumour.Length == 0 && markers.Count > 0) Heard(q, FightRumour(world, q, 0));
+        var near = markers.FirstOrDefault(m => Access.YoursNearPoint(world, m, SightReach));
+        if (near == default) return;
+        bool news = q.SightHours < 0 || world.GameHours - q.SightHours > 2;
+        q.SightHours = world.GameHours;
+        (q.SeenX, q.SeenZ) = (near.X, near.Y);
+        if (news) Heard(q, $"Day {Day(world)}: your squad saw {Who(q)}{InRegion(near)}{Landmark(near, q.Site)}.");
+    }
+
+    /// <summary>
+    /// A townsperson asked about your guild work (his rule, 2026-11-25: free but vague): for each running quest they may know something
+    /// (half the time; one answer per quest per 6 game hours): a rough fresh rumour of a fight's targets, or the general word on goods.
+    /// </summary>
+    void AskTown(World world, AskTownsfolk a)
+    {
+        string name = world.Characters.NameOf(a.Npc);
+        if (name.Length == 0) name = "They";
+        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)world.Tick * 0x9E3779B97F4A7C15UL + (ulong)a.Npc.Slot));
+        var told = new List<string>();
+        foreach (var q in _s.Quests.Where(q => !q.Done && HasRumours(q)).OrderBy(q => q.Id))
+        {
+            if (q.TownAskHours >= 0 && world.GameHours - q.TownAskHours < 6) continue;
+            q.TownAskHours = world.GameHours;
+            if (!dice.Chance(0.5)) continue;
+            string line = RumourOf(world, q, 0);
+            if (IsFight(q) || q.RumourLevel == 0) Heard(q, line);
+            told.Add(line.Contains(": ") ? line[(line.IndexOf(": ", StringComparison.Ordinal) + 2)..] : line);
+        }
+        _dirty = true;
+        RadiantQuestsMod.Toast(told.Count == 0 ? $"{name} hasn't heard anything about your work."
+            : $"{name}: \"{string.Join(" ", told.Take(2))}\"");
     }
 
     /// <summary>"near here", "some way off", "far from here", by the straight distance.</summary>
