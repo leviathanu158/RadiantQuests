@@ -137,7 +137,11 @@ public sealed class GuildUi : IUiExtension
         });
         _pickGive = r.RegisterAction("pickgive", _ =>
         {
-            if (s_pickQuest >= 0) Send(new HandInPicked(s_clerk, s_pickQuest, [.. s_picks.Order(StringComparer.Ordinal)]) { Tick = Tick });
+            if (s_pickQuest < 0 || s_picks.Count == 0) return;
+            Send(new HandInPicked(s_clerk, s_pickQuest, [.. s_picks.Order(StringComparer.Ordinal)]) { Tick = Tick });
+            s_picks.Clear();
+            // The inventory closes with the hand-in (his rule, 2026-11-25; while paused the items would show until the game runs on).
+            Notices.CloseInventory();
         });
         _pickCancel = r.RegisterAction("pickcancel", _ =>
         {
@@ -567,7 +571,7 @@ public sealed class GuildUi : IUiExtension
         if (!s_open || GuildSystem.View is not { } view || !PickShown(view)) return null;
         var hv = view.HandIn!;
         int units = hv.Choices.Where(c => s_picks.Contains(c.Id) && c.Problem.Length == 0).Sum(c => c.Units);
-        return Button("rq-inv-give", $"Hand in ({units}/{hv.Need})", _pickGive, "", units >= hv.Need, 170, 1, false, 30);
+        return Button("rq-inv-give", units >= hv.Need ? $"Hand in ({units}/{hv.Need})" : $"Hand in {units} (part)", _pickGive, "", units >= 1, 170, 1, false, 30);
     }
 
     /// <summary>Whether the pick window is open now: its list came for the quest it was opened for, and it was not closed here.</summary>
@@ -588,10 +592,10 @@ public sealed class GuildUi : IUiExtension
         int units = hv.Choices.Where(c => s_picks.Contains(c.Id) && c.Problem.Length == 0).Sum(c => c.Units);
         var head = Row("rq-pick-h", line);
         head.Children.Add(Label("rq-pick-t", $"{hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-160 * s, 1)));
-        head.Children.Add(Button("rq-pick-give", "Hand in", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
+        head.Children.Add(Button("rq-pick-give", units >= hv.Need ? "Hand in" : "Hand in part", _pickGive, "", units >= 1, 150 * s, lv, false, line));
         body.Children.Add(head);
         body.Children.Add(Label("rq-pick-help", hv.Choices.Any(c => c.Problem.Length == 0)
-            ? "Click the items with a yellow circle in your inventory, then Hand in."
+            ? "Click the items with a yellow circle in your inventory, then Hand in. Fewer than needed is a part delivery: it counts, and the quest can't fail after it."
             : "None of your characters at the clerk carry anything that counts.", _dim[lv], Math.Max(24, 24 * s)));
         return w;
     }

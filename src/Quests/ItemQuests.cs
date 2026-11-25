@@ -121,7 +121,7 @@ public abstract class BringItemsQuest : IQuestType
     public TrackResult Track(World world, GuildSystem guild, Quest q, List<Vector2> markers)
     {
         var need = Need(guild, q);
-        q.Have = Math.Min(q.Need, guild.Access.CarriedAnywhere(world, need));
+        q.Have = Math.Min(q.Need, q.Delivered + guild.Access.CarriedAnywhere(world, need));
         if (q.MinWorth > 0) q.Best = guild.Access.BestCarried(world, need);
         // No markers for where to get goods (his rule, 2026-11-24): the clerk's rumour tells (GuildSystem.Rumours); the best rumour's place
         // is marked once bought.
@@ -133,8 +133,9 @@ public abstract class BringItemsQuest : IQuestType
     {
         var at = new Vector2(clerk.Position.X, clerk.Position.Z);
         // The pick window's choice when there is one, else the least worth first (never what is worn).
-        var worths = guild.Picked is { } picked ? guild.Access.TakePicked(world, picked, q.Need)
-            : guild.Access.TakeCarried(world, at, GuildSystem.ClerkReachUnits, Need(guild, q), q.Need);
+        int still = Math.Max(1, q.Need - q.Delivered);
+        var worths = guild.Picked is { } picked ? guild.Access.TakePicked(world, picked, still)
+            : guild.Access.TakeCarried(world, at, GuildSystem.ClerkReachUnits, Need(guild, q), still);
         if (worths.Count == 0)
         {
             RadiantQuestsMod.Toast($"Bring it to the clerk: {q.Describe()} (worn gear must be taken off first; goods stolen from {clerk.FactionName} don't count).");
@@ -143,7 +144,7 @@ public abstract class BringItemsQuest : IQuestType
         // Over-delivering (his rule): a tip of a tenth of the extra worth, at most a quarter of the pay. Never from what was asked.
         if (q.MinWorth > 0)
         {
-            long extra = worths.Sum(w => (long)w) - (long)q.MinWorth * q.Need;
+            long extra = worths.Sum(w => (long)w) - (long)q.MinWorth * worths.Count;
             long tip = (long)Math.Round(Math.Min(extra * ItemQuestKinds.TipShare, q.CatsNow * ItemQuestKinds.TipCap) / 10) * 10;
             if (tip >= 10)
             {

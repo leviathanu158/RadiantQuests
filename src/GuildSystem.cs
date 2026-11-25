@@ -119,6 +119,15 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                     case TestRep r: GainRep(r.Amount); break;
                     case TestFinish f: TestFinishQuest(world, f.QuestId); break;
                     case TestOfferCmd to: TestOffer(world, to.Clerk, to.Kind, to.Rank, to.Take, to.Filter); break;
+                    case TestGiveItem tg:
+                        if (_s.Quests.FirstOrDefault(x => x.Id == tg.QuestId) is { } gq
+                            && Access.NearestYours(world, new Vector2(gq.AnchorX, gq.AnchorZ), ClerkReach * 4) is var who && who != CharacterId.None)
+                        {
+                            string record = ItemCat.MembersOf(gq.TargetId).OrderBy(r => r, StringComparer.Ordinal).First();
+                            for (int n = 0; n < Math.Max(1, tg.Count); n++) Access.Give(world, who, record, 1);
+                            RadiantQuestsMod.Log($"test: gave {tg.Count} x {record} for quest #{gq.Id}");
+                        }
+                        break;
                     case TestCourier tc:
                         if (_s.Quests.FirstOrDefault(x => x.Id == tc.QuestId) is { } cr)
                         {
@@ -432,6 +441,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     {
         var q = _s.Quests.FirstOrDefault(x => x.Id == id);
         if (q is null) return;
+        if (SettleDelivered(world, q, "given up")) return;
         // Nothing of it can be found now (no target marked, none defeated): not your fault, so giving it up is free.
         // (Fights only: an item quest shows no marker by design, a supply quest's goods can always be bought.)
         bool nothing = q.Kind is Catalog.Hunt or Catalog.Cull or GroupQuest.KindId or LairQuest.KindId
@@ -477,6 +487,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// </summary>
     void FailQuest(World world, Quest q, string why)
     {
+        if (SettleDelivered(world, q, $"ended ({why})")) return;
         End(world, q);
         int cost = (int)Math.Round(q.Rep * _set.FailCost * Math.Max(1, q.PenaltyMult));
         int relation = q.General ? 0 : Ranks.FailRelation(q.Rank);

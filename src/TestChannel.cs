@@ -153,6 +153,9 @@ internal static class TestChannel
                 if (p.Length < 3) return "offer <kind> <rank>";
                 Send(new TestOfferCmd(clerks[s_openIndex].Id, p[1], Arg(2), p[0] == "take", string.Join(" ", p.Skip(3))) { Tick = tick });
                 return "sent (see log: test offer)";
+            case "giveq":
+                Send(new TestGiveItem(Arg(1), Math.Max(1, Arg(2))) { Tick = tick });
+                return "sent";
             case "courier":
                 Send(new TestCourier(Arg(1)) { Tick = tick });
                 return "sent (see log: test courier)";

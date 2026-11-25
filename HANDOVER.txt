@@ -248,6 +248,15 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.9.9 (2026-11-25, his design: PARTIAL HAND-INS; and the inventory closes on Hand in): Quest.Delivered (hashed). Hand in is
+usable from one picked item; fewer than still needed = a partial delivery (GuildSystem.HandInPick: taken, Delivered += n, no pay yet);
+item quests' Have = Delivered + carried; the final hand-in takes only what is still missing (BringItemsQuest.HandIn) and pays the full
+reward. Once anything is delivered the quest can't fail: abandoned or out of time it pays the delivered share of cats and rep, no penalty
+(GuildSystem.SettleDelivered from AbandonQuest/FailQuest). Picks are now per item (a stack is one): Offered no longer groups alike
+items; its Id is holder|record|section|x|y. Hand in also closes the inventory (Notices.CloseInventory, same reflected action). Quest
+text shows "(N delivered)". Test channel: giveq <quest> <n> gives the quest's item to the nearest of yours at its clerk. TESTED on
+"Hand in Bug": 5 of 9 Rusted Wrench then the other 4 -> full 870c/94 rep; 5 of 9 then abandon -> 480c/52 rep, no penalty; mod-check PASS.
+
 STATE 0.9.8 (2026-11-25, his report: clicking an item didn't fill the circle; moving an item onto a marked one moved the mark to it):
 the game's item drag took the press first: now only an 18 px dot at the bottom of the cell is the control and it holds the press
 (Pointer = UiPointerEvents.Release, so the item isn't picked up there; the rest of the cell drags as usual), toggling on Press. Cells

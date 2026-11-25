@@ -214,6 +214,11 @@ public sealed class Quest
     public double StolenSince = -1;
     /// <summary>Gear quests: the worth of the best matching item your characters carry (the journal's "your best").</summary>
     public int Best;
+    /// <summary>
+    /// Item quests: how many units were already handed in (his rule, 2026-11-25: a partial hand-in counts; heavy or big goods can come in
+    /// parts). Once any are in, the quest can't fail: abandoned or out of time it pays the share delivered.
+    /// </summary>
+    public int Delivered;
     /// <summary>Test channel only: the next ambush roll hits, wherever the courier is.</summary>
     public bool ForceAmbush;
     /// <summary>Item quests: what the clerk told you of where to get it (kept, so it can be read again), and how good it is (0 free, 1, 2).</summary>
@@ -265,7 +270,8 @@ public sealed class Quest
     public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
 
     /// <summary>For the windows: a worth target also says the best matching item you carry.</summary>
-    public string DescribeWithBest() => Describe() + (MinWorth > 0 && !Done ? Best > 0 ? $" (your best: {Best:N0})" : " (you carry none)" : "");
+    public string DescribeWithBest() => Describe() + (Delivered > 0 ? $" ({Delivered} delivered)" : "")
+        + (MinWorth > 0 && !Done ? Best > 0 ? $" (your best: {Best:N0})" : " (you carry none)" : "");
 
     /// <summary>A few pack animals that wandered off (see <see cref="Offer.Strays"/>).</summary>
     public bool Strays;
@@ -387,6 +393,7 @@ public sealed class Quest
         h.Add(StolenSince);
         h.Add(Best);
         h.Add(ForceAmbush);
+        h.Add(Delivered);
         h.Add(Rng.StableHash(Rumour));
         h.Add(RumourLevel);
         h.Add(MarkersHidden);
@@ -560,3 +567,6 @@ public sealed record TestAmbush(int QuestId) : GuildCommand;
 
 /// <summary>Test channel only: logs a courier quest's parcel, courier and ambush.</summary>
 public sealed record TestCourier(int QuestId) : GuildCommand;
+
+/// <summary>Test channel only: gives the nearest of yours at the quest's clerk <paramref name="Count"/> of the quest's item (a group: its first member).</summary>
+public sealed record TestGiveItem(int QuestId, int Count) : GuildCommand;

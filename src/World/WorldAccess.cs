@@ -708,8 +708,8 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
         /// </summary>
         public IReadOnlyList<(string Section, int X, int Y)> Spots { get; init; } = [];
 
-        /// <summary>A key that stays the same while the items stay (holder, item, worth, marks): picks keep to it across refreshes.</summary>
-        public string Id => $"{Who.Slot}.{Who.Generation}|{Items[0].Record}|{Worth}|{Worn}|{StolenFrom}";
+        /// <summary>A key that stays the same while the item stays where it is (holder, item, square): picks keep to it across refreshes.</summary>
+        public string Id => $"{Who.Slot}.{Who.Generation}|{Items[0].Record}|{Items[0].Section}|{Items[0].X}|{Items[0].Y}";
     }
 
     /// <summary>Every item of <paramref name="records"/> (untagged) your characters within <paramref name="reach"/> of <paramref name="at"/> carry, bags included, alike ones together.</summary>
@@ -721,8 +721,9 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
             {
                 var cells = new Dictionary<Meitou.Simulation.Items.ItemInstance, int>(ReferenceEqualityComparer.Instance);
                 foreach (var (index, item) in inv.Shown()) cells.TryAdd(item, index);
+                // One line per item (a stack is one): each is picked on its own (partial hand-ins, his rule 2026-11-25).
                 foreach (var g in inv.All().Where(i => records.Contains(i.Record) && i.ModTag.Length == 0)
-                    .GroupBy(i => (i.Record, Worth: WorthOf(i), Worn: Worn(inv, i), i.StolenFrom)))
+                    .GroupBy(i => (Item: i, i.Record, Worth: WorthOf(i), Worn: Worn(inv, i), i.StolenFrom)))
                     list.Add(new Offered(id, [.. g], data.Db.Find(g.Key.Record)?.Name?.Trim() ?? g.Key.Record, cold.Name, g.Key.Worth,
                         g.Sum(i => Math.Max(1, i.Quantity)), g.Key.Worn, g.Key.StolenFrom)
                     {
