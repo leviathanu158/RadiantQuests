@@ -24,7 +24,12 @@ public static class PausedCommands
             var world = __instance;
             if (world.Systems.OfType<GuildSystem>().FirstOrDefault() is not { } guild) return;
             var due = world.Commands.TakeDue(world.Tick, c => c is GuildCommand);
-            if (due.Count == 0) return;
+            // An open hand-in list is refreshed after the paused interface's own commands too (items moved while paused keep their marks).
+            if (due.Count == 0)
+            {
+                if (guild.PickOpen) guild.PublishNow(world);
+                return;
+            }
             guild.Inputs(world, due);
             guild.PublishNow(world);
         }

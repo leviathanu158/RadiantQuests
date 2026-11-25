@@ -701,6 +701,15 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
     {
         /// <summary>Where its items sit in the holder's inventory window (Inventory.Shown's index, the cell's InventoryItemView.Index).</summary>
         public IReadOnlyList<int> Cells { get; init; } = [];
+
+        /// <summary>
+        /// Where each of its items lies (section and square): the inventory screen marks a cell only when the item there is still this one
+        /// (his report: moving an item over a marked one moved the mark to the newcomer).
+        /// </summary>
+        public IReadOnlyList<(string Section, int X, int Y)> Spots { get; init; } = [];
+
+        /// <summary>A key that stays the same while the items stay (holder, item, worth, marks): picks keep to it across refreshes.</summary>
+        public string Id => $"{Who.Slot}.{Who.Generation}|{Items[0].Record}|{Worth}|{Worn}|{StolenFrom}";
     }
 
     /// <summary>Every item of <paramref name="records"/> (untagged) your characters within <paramref name="reach"/> of <paramref name="at"/> carry, bags included, alike ones together.</summary>
@@ -716,7 +725,10 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
                     .GroupBy(i => (i.Record, Worth: WorthOf(i), Worn: Worn(inv, i), i.StolenFrom)))
                     list.Add(new Offered(id, [.. g], data.Db.Find(g.Key.Record)?.Name?.Trim() ?? g.Key.Record, cold.Name, g.Key.Worth,
                         g.Sum(i => Math.Max(1, i.Quantity)), g.Key.Worn, g.Key.StolenFrom)
-                    { Cells = [.. g.Where(cells.ContainsKey).Select(i => cells[i])] });
+                    {
+                        Cells = [.. g.Where(cells.ContainsKey).Select(i => cells[i])],
+                        Spots = [.. g.Select(i => (i.Section, i.X, i.Y))],
+                    });
             }
         return list;
     });

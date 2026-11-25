@@ -13,6 +13,10 @@ public sealed record HandInChoice(int Key, string Name, string Holder, int Worth
     /// <summary>Who carries it, and where its items sit in their inventory window (for marking the cells there).</summary>
     public CharacterId Who { get; init; }
     public IReadOnlyList<int> Cells { get; init; } = [];
+    /// <summary>Where each of its items lies (section, square), to mark the right cells; and its lasting key (picks keep to it).</summary>
+    public IReadOnlyList<(string Section, int X, int Y)> Spots { get; init; } = [];
+    public string Id { get; init; } = "";
+    public string Record { get; init; } = "";
 }
 
 /// <summary>The pick window: the quest, how many it needs, and what can be picked.</summary>
@@ -21,6 +25,9 @@ public sealed record HandInView(int QuestId, string Quest, int Need, IReadOnlyLi
 public sealed partial class GuildSystem
 {
     HandInView? _handInView;
+
+    /// <summary>Whether a hand-in's pick list is open.</summary>
+    public bool PickOpen => _handInView is not null;
     List<WorldAccess.Offered> _handInItems = [];
 
     /// <summary>The items picked for the hand-in being made now (null: none; the quest takes its own way).</summary>
@@ -67,7 +74,8 @@ public sealed partial class GuildSystem
             string problem = o.Worn ? "worn: take it off first"
                 : refuse >= 0 && o.StolenFrom == refuse ? $"stolen from {clerk.FactionName}"
                 : least > 0 && o.Worth < least ? $"worth too little (needs about {q.MinWorth:N0})" : "";
-            choices.Add(new HandInChoice(k, o.Name, o.Holder, o.Worth, o.Units, problem) { Who = o.Who, Cells = o.Cells });
+            choices.Add(new HandInChoice(k, o.Name, o.Holder, o.Worth, o.Units, problem)
+                { Who = o.Who, Cells = o.Cells, Spots = o.Spots, Id = o.Id, Record = o.Items[0].Record });
         }
         _handInView = new HandInView(q.Id, q.Describe(), q.Need, choices);
         _dirty = true;
@@ -77,8 +85,8 @@ public sealed partial class GuildSystem
     void HandInPick(World world, HandInPicked p)
     {
         if (_handInView is not { } view || view.QuestId != p.QuestId) return;
-        var picked = p.Keys.Distinct().Where(k => k >= 0 && k < _handInItems.Count && view.Choices[k].Problem.Length == 0)
-            .Select(k => _handInItems[k]).ToList();
+        var ids = p.Ids.ToHashSet(StringComparer.Ordinal);
+        var picked = _handInItems.Where((o, k) => ids.Contains(o.Id) && view.Choices[k].Problem.Length == 0).ToList();
         int units = picked.Sum(o => o.Units);
         if (units < view.Need)
         {

@@ -185,7 +185,8 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         if (world.Tick % 60 == 0) Guarded("time limits", () => Expire(world));
         if (world.Tick - _lastDefeats >= 30) Guarded("defeats", () => CheckDefeats(world));
         if (world.Tick - _lastTrack >= 150) Guarded("tracking", () => Track(world));
-        if (_dirty || world.Tick - _lastPublish >= 60) Publish(world);
+        // (An open hand-in list is refreshed four times a second, so moved items keep their marks.)
+        if (_dirty || world.Tick - _lastPublish >= (_handInView is null ? 60 : 8)) Publish(world);
     }
 
     /// <summary>Runs one engine part; a failure is logged (at most once a minute) and the rest of the tick goes on.</summary>

@@ -248,6 +248,14 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.9.8 (2026-11-25, his report: clicking an item didn't fill the circle; moving an item onto a marked one moved the mark to it):
+the game's item drag took the press first: now only an 18 px dot at the bottom of the cell is the control and it holds the press
+(Pointer = UiPointerEvents.Release, so the item isn't picked up there; the rest of the cell drags as usual), toggling on Press. Cells
+are matched by the item there NOW (record + section + square: Offered.Spots / HandInChoice.Spots), not the list index; picks are
+keyed by a lasting id (holder|record|worth|worn|stolen: Offered.Id, HandInChoice.Id, HandInPicked.Ids); the list refreshes 4 times a
+second while open (Schedule) and after paused interface commands (PausedCommands, GuildSystem.PickOpen). Checked on "Hand in Bug":
+pick + hand in by id paid "Bring 1 Iron Plates" (+390c, +48 rep); mod-check PASS. Clicks and look: HE CHECKS.
+
 STATE 0.9.7 (2026-11-25, his flow: Hand in -> inventory opens -> valid items get a small yellow circle at the bottom -> click fills it ->
 Hand in button -> reward): the cell mark is now a 14 px circle image (data/ui/circle-open.png and circle-full.png, copied next to the dll
 by build.ps1; UiNodeKind.Image with the full path under ModContext.Folder) at the bottom centre of each valid cell, inside a transparent

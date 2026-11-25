@@ -526,7 +526,7 @@ public sealed record BuyRumour(CharacterId Clerk, int QuestId) : GuildCommand;
 public sealed record ShowHandIn(CharacterId Clerk, int QuestId) : GuildCommand;
 
 /// <summary>Hand in the goods picked in the pick window (their keys in its list).</summary>
-public sealed record HandInPicked(CharacterId Clerk, int QuestId, IReadOnlyList<int> Keys) : GuildCommand;
+public sealed record HandInPicked(CharacterId Clerk, int QuestId, IReadOnlyList<string> Ids) : GuildCommand;
 
 /// <summary>Hide or show a quest's markers on the map.</summary>
 public sealed record ToggleMarkers(int QuestId) : GuildCommand;

@@ -169,7 +169,8 @@ internal static class TestChannel
                     $"[{c.Key}] {c.Units}x {c.Name} ({c.Holder} {c.Who}, cells {string.Join(",", c.Cells)}) worth {c.Worth}{(c.Problem.Length > 0 ? " - " + c.Problem : "")}")) : "no pick list";
             case "give":
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
-                Send(new HandInPicked(clerks[s_openIndex].Id, Arg(1), [.. p.Skip(2).Select(k => int.TryParse(k, out int v) ? v : -1)]) { Tick = tick });
+                var keys = p.Skip(2).Select(k => int.TryParse(k, out int v) ? v : -1).ToHashSet();
+                Send(new HandInPicked(clerks[s_openIndex].Id, Arg(1), [.. (view?.HandIn?.Choices ?? []).Where(c => keys.Contains(c.Key)).Select(c => c.Id)]) { Tick = tick });
                 return "sent";
             case "hide":
                 Send(new ToggleMarkers(Arg(1)) { Tick = tick });

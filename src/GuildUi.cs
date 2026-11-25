@@ -33,7 +33,7 @@ public sealed class GuildUi : IUiExtension
     string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "", _cellHit = "";
 
     /// <summary>The pick window's ticked lines (keys), for the quest it was opened for; a quest id whose window was closed here.</summary>
-    static readonly HashSet<int> s_picks = [];
+    static readonly HashSet<string> s_picks = new(StringComparer.Ordinal);
     static int s_pickQuest = -1, s_pickClosed = -1;
     string _move = "", _resize = "", _scale = "", _hint = "";
     /// <summary>A hint shown beside the pointer while it is over a control that has one (Meitou has no tooltips for mod controls).</summary>
@@ -133,12 +133,11 @@ public sealed class GuildUi : IUiExtension
         });
         _pickToggle = r.RegisterAction("picktoggle", a =>
         {
-            if (!int.TryParse(a.Argument, out int key)) return;
-            if (!s_picks.Remove(key)) s_picks.Add(key);
+            if (a.Argument.Length > 0 && !s_picks.Remove(a.Argument)) s_picks.Add(a.Argument);
         });
         _pickGive = r.RegisterAction("pickgive", _ =>
         {
-            if (s_pickQuest >= 0) Send(new HandInPicked(s_clerk, s_pickQuest, [.. s_picks.Order()]) { Tick = Tick });
+            if (s_pickQuest >= 0) Send(new HandInPicked(s_clerk, s_pickQuest, [.. s_picks.Order(StringComparer.Ordinal)]) { Tick = Tick });
         });
         _pickCancel = r.RegisterAction("pickcancel", _ =>
         {
@@ -150,7 +149,7 @@ public sealed class GuildUi : IUiExtension
         {
             if (a.Kind == UiEventKind.Enter && a.Argument.StartsWith('!')) s_hint = (a.Argument[1..], a.Position);
             else if (a.Kind == UiEventKind.Leave) s_hint = null;
-            else if (a.Kind == UiEventKind.Press && int.TryParse(a.Argument, out int key) && !s_picks.Remove(key)) s_picks.Add(key);
+            else if (a.Kind == UiEventKind.Press && a.Argument.Length > 0 && !a.Argument.StartsWith('!') && !s_picks.Remove(a.Argument)) s_picks.Add(a.Argument);
         });
         foreach (var screen in new[] { "inventory", "bag" })
             r.AddScreenControls(screen, UiScreens.ItemCells, UiAnchorPlacement.Inside, Cell);
@@ -537,17 +536,29 @@ public sealed class GuildUi : IUiExtension
     UiNode? Cell(UiScreenContext ctx)
     {
         if (!s_open || ctx.Item is not { } cell || GuildSystem.View is not { } view || !PickShown(view)) return null;
-        var choice = view.HandIn!.Choices.FirstOrDefault(c => c.Who == cell.Owner.Character && c.Cells.Contains(cell.Item.Index)
-            && c.Problem.Length == 0);
+        // The item in this cell now (what it is and where it lies), not the cell's place in a list: a moved or swapped item keeps its mark.
+        var it = cell.Item;
+        var choice = view.HandIn!.Choices.FirstOrDefault(c => c.Problem.Length == 0 && c.Who == cell.Owner.Character && c.Record == it.Record
+            && c.Spots.Contains((it.Section, it.X, it.Y)));
         if (choice is null || RadiantQuestsMod.Context?.Folder is not { } folder) return null;
-        bool on = s_picks.Contains(choice.Key);
-        var node = new UiNode($"rq-cell-{choice.Key}-{cell.Item.Index}") { Style = _cellHit, Action = _cellPick, Argument = choice.Key.ToString() };
-        node.Children.Add(new UiNode($"rq-cellc-{choice.Key}-{cell.Item.Index}", UiNodeKind.Image)
+        bool on = s_picks.Contains(choice.Id);
+        // Only the circle takes the click (it holds the press, so the item isn't picked up); the rest of the cell drags as usual.
+        var root = new UiNode($"rq-cell-{it.Index}") { Pickable = false };
+        var dot = new UiNode($"rq-celld-{it.Index}")
+        {
+            Style = _cellHit,
+            Action = _cellPick,
+            Argument = choice.Id,
+            Pointer = UiPointerEvents.Release,
+            Placement = new UiPlacement(18, 18, new UiLength(-9, 0.5f), default, null, 1),
+        };
+        dot.Children.Add(new UiNode($"rq-cellc-{it.Index}", UiNodeKind.Image)
         {
             Image = System.IO.Path.Combine(folder, on ? "circle-full.png" : "circle-open.png"),
-            Placement = new UiPlacement(14, 14, new UiLength(-7, 0.5f), default, null, 3),
+            Placement = new UiPlacement(14, 14, 2, 2),
         });
-        return node;
+        root.Children.Add(dot);
+        return root;
     }
 
     /// <summary>The hand-in button on the inventory window: "Hand in (picked/needed)", enabled once enough are picked.</summary>
@@ -555,7 +566,7 @@ public sealed class GuildUi : IUiExtension
     {
         if (!s_open || GuildSystem.View is not { } view || !PickShown(view)) return null;
         var hv = view.HandIn!;
-        int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
+        int units = hv.Choices.Where(c => s_picks.Contains(c.Id) && c.Problem.Length == 0).Sum(c => c.Units);
         return Button("rq-inv-give", $"Hand in ({units}/{hv.Need})", _pickGive, "", units >= hv.Need, 170, 1, false, 30);
     }
 
@@ -574,7 +585,7 @@ public sealed class GuildUi : IUiExtension
         int lv = win.Font;
         float s = win.Scale, line = Math.Max(30, 30 * s);
         var w = Frame("rq-pick-win", "pick", win, "Hand in goods", _pickCancel, out var body);
-        int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
+        int units = hv.Choices.Where(c => s_picks.Contains(c.Id) && c.Problem.Length == 0).Sum(c => c.Units);
         var head = Row("rq-pick-h", line);
         head.Children.Add(Label("rq-pick-t", $"{hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-160 * s, 1)));
         head.Children.Add(Button("rq-pick-give", "Hand in", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
