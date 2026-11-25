@@ -248,6 +248,22 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.11.0 (2026-11-25, PROGRESSION part 1, his decisions; the rep store is next session): GuildSystem.Progression.cs. ENTRY: a newcomer
+(GuildState.Member false) can't take work until the entry trial (an easy E Hunt/Defeat brought in, the easiest candidate) is handed in.
+RANK TRIALS: Rank = min(Promoted, rank by rep); rep reaching the next rank posts "take the rank trial"; the trial is the hardest Hunt/
+Defeat candidate of the new rank (Offer/Quest.Trial 1 entry, 2 rank; "Entry trial: "/"Rank trial: " prefix); fail/abandon costs nothing
+(TrialEnded); hand-in promotes (TrialDone) and queues the rank's reward (GuildState.RewardsDue). REWARDS (his rule: items at every rank,
+a wide selection): RewardChoices = every weapon kind, every armour class+slot (the group's best-known member: most shop towns, then best
+top grade), the best sold backpack, medical supplies (2 + rank), or a purse (1.5 x the rank's top quest pay); gear at RewardGrade D 25,
+C 40, B 55, A 70, S 85, SS 100 (WorldAccess.Give level). TITLES (his: wasteland flavour, new names): Dust Walker, Sellsword, Road Hound,
+Wasteland Stalker, Iron Warden, Scourge of the Sands, Legend of the Wastes (GuildSystem.Titles; one line to change). UI: a "Guild" side
+window beside the clerk's when a trial or reward is due (Take the trial; reward buttons by Weapon/Armour/Other); titles in the guild
+window and journal headers. Setting "Guild trials" (Ranks, on). Older saves: members at the rank their rep gives (MigrateProgression).
+Test channel: progress, trial, reward <rank> <key>, repraw <n> (rep without promotion); "rep" and F10 also promote (testing).
+TESTED on "Mostly vanilla Test save": not a member -> entry trial Hunt 3 Crop Louse -> "Welcome ..., Dust Walker"; repraw 600 -> rank
+trial Hunt 5 Slough Hyena -> "Promoted to guild rank D: Sellsword"; 29 reward choices; katana -> Ninjato (grade 25); mod-check PASS.
+The side window's look: HE CHECKS.
+
 WORKSHOP (2026-11-25): uploaded as a PRIVATE item, id 3845587706 (written into the pipeline's workshop-radiantquests.toml). The pipeline's
 vdf_escape was fixed (SteamCMD's VDF reader takes no escapes: \" broke the description, \n showed as text): line breaks stay real,
 straight double quotes become typographic ones (only matters when a description file is sent; Manual Combat sends none). Checked: the

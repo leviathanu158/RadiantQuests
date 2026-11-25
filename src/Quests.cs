@@ -91,6 +91,8 @@ public sealed class Offer
     public int DestSite = -1;
     /// <summary>Recover quests: who carries the item (a faction id).</summary>
     public string Carrier = "";
+    /// <summary>A guild trial (his rules, 2026-11-25): 1 the entry trial, 2 a rank trial; 0 ordinary work.</summary>
+    public int Trial;
     /// <summary>Gear quests: the least worth (cats, the game's own price) an item must have (0: any).</summary>
     public int MinWorth;
     /// <summary>Its time limit in game hours (0: the usual; below 0: none).</summary>
@@ -103,7 +105,8 @@ public sealed class Offer
         AtZ = at.Y;
     }
 
-    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
+    public string Describe() => (Trial == 1 ? "Entry trial: " : Trial == 2 ? "Rank trial: " : "")
+        + Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
 }
 
 /// <summary>One town's board for one day.</summary>
@@ -219,6 +222,8 @@ public sealed class Quest
     /// parts). Once any are in, the quest can't fail: abandoned or out of time it pays the share delivered.
     /// </summary>
     public int Delivered;
+    /// <summary>A guild trial (1 entry, 2 rank; 0 ordinary): no cost if it fails, membership or a promotion when handed in.</summary>
+    public int Trial;
     /// <summary>What you have heard of the quest, newest last (day-stamped lines; at most 6): the journal's "heard" log.</summary>
     public List<string> RumourLog = [];
     /// <summary>Fight quests: when one of yours last saw a target (game hours; below 0: never). The place is SeenX/SeenZ.</summary>
@@ -273,7 +278,8 @@ public sealed class Quest
         }
     }
 
-    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
+    public string Describe() => (Trial == 1 ? "Entry trial: " : Trial == 2 ? "Rank trial: " : "")
+        + Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
 
     /// <summary>For the windows: a worth target also says the best matching item you carry.</summary>
     public string DescribeWithBest() => Describe() + (Delivered > 0 ? $" ({Delivered} delivered)" : "")
@@ -400,6 +406,7 @@ public sealed class Quest
         h.Add(Best);
         h.Add(ForceAmbush);
         h.Add(Delivered);
+        h.Add(Trial);
         h.Add(RumourLog.Count);
         foreach (var line in RumourLog) h.Add(Rng.StableHash(line));
         h.Add(SightHours);
@@ -445,6 +452,12 @@ public sealed class GuildState
     /// <summary>Spawn groups (template ids) that came out broken, and how often in a row: 3 strikes and it is not brought in again in this
     /// save; one good spawn clears them.</summary>
     public Dictionary<string, int> SpawnStrikes = new(StringComparer.Ordinal);
+    /// <summary>Progression (0.11.0): a member of the guild (the entry trial done), the rank won by trials, set up once (older saves).</summary>
+    public bool Member;
+    public int Promoted;
+    public bool ProgressionSet;
+    /// <summary>Ranks whose reward is still to be picked at a clerk.</summary>
+    public List<int> RewardsDue = [];
 
     public long PointsWith(string faction) => FactionPoints.GetValueOrDefault(faction);
 
@@ -452,6 +465,11 @@ public sealed class GuildState
     {
         h.Add(Lifetime);
         h.Add(Balance);
+        h.Add(Member);
+        h.Add(Promoted);
+        h.Add(ProgressionSet);
+        h.Add(RewardsDue.Count);
+        foreach (var r in RewardsDue) h.Add(r);
         h.Add(FactionPoints.Count);
         foreach (var kv in FactionPoints.OrderBy(kv => kv.Key, StringComparer.Ordinal))
         {
@@ -509,6 +527,7 @@ public sealed class GuildState
                 h.Add(o.DestSite);
                 h.Add(Rng.StableHash(o.Carrier));
                 h.Add(o.MinWorth);
+                h.Add(o.Trial);
                 h.Add(o.Hours);
             }
         }
@@ -548,6 +567,12 @@ public sealed record HandInPicked(CharacterId Clerk, int QuestId, IReadOnlyList<
 /// <summary>Ask a townsperson what they have heard of your guild work (free, vague; his rule 2026-11-25).</summary>
 public sealed record AskTownsfolk(CharacterId Npc) : GuildCommand;
 
+/// <summary>Take the guild trial now due (the entry trial, or a rank trial) at this clerk.</summary>
+public sealed record TakeTrialCmd(CharacterId Clerk) : GuildCommand;
+
+/// <summary>Pick a rank's reward at a clerk: <paramref name="Choice"/> is a gear group key, "pack", "med" or "cats".</summary>
+public sealed record ClaimRankReward(CharacterId Clerk, int Rank, string Choice) : GuildCommand;
+
 /// <summary>Hide or show a quest's markers on the map.</summary>
 public sealed record ToggleMarkers(int QuestId) : GuildCommand;
 
@@ -556,6 +581,9 @@ public sealed record TestKill(string TargetId) : GuildCommand;
 
 /// <summary>Test channel only: add guild rep.</summary>
 public sealed record TestRep(int Amount) : GuildCommand;
+
+/// <summary>Test channel only: rep gained as from quests (no promotion: the rank trial flow).</summary>
+public sealed record TestRepRaw(int Amount) : GuildCommand;
 
 /// <summary>Test channel only: brings every quest's deadline <paramref name="Hours"/> game hours closer, as if that much time had passed.</summary>
 public sealed record TestSkip(double Hours) : GuildCommand;

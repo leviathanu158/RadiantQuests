@@ -30,7 +30,7 @@ public sealed class GuildUi : IUiExtension
 
     static readonly List<(string Text, long Until)> s_toasts = [];
 
-    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "", _cellHit = "";
+    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "", _cellHit = "", _trial = "", _reward = "";
 
     /// <summary>The pick window's ticked lines (keys), for the quest it was opened for; a quest id whose window was closed here.</summary>
     static readonly HashSet<string> s_picks = new(StringComparer.Ordinal);
@@ -159,6 +159,13 @@ public sealed class GuildUi : IUiExtension
             r.AddScreenControls(screen, UiScreens.ItemCells, UiAnchorPlacement.Inside, Cell);
         // The hand-in button on the inventory window itself (above its Arrange button), while goods are being picked.
         r.AddScreenControls("inventory", "ArrangeButton", UiAnchorPlacement.Above, InventoryHandIn);
+        _trial = r.RegisterAction("trial", _ => Send(new TakeTrialCmd(s_clerk) { Tick = Tick }));
+        _reward = r.RegisterAction("reward", a =>
+        {
+            int bar = a.Argument.IndexOf('|');
+            if (bar > 0 && int.TryParse(a.Argument[..bar], out int rank))
+                Send(new ClaimRankReward(s_clerk, rank, a.Argument[(bar + 1)..]) { Tick = Tick });
+        });
         _hide = r.RegisterAction("hide", a =>
         {
             if (int.TryParse(a.Argument, out int id)) Send(new ToggleMarkers(id) { Tick = Tick });
@@ -345,6 +352,7 @@ public sealed class GuildUi : IUiExtension
                 {
                     root.Children.Add(Window(f, view));
                     if (PickShown(view)) root.Children.Add(PickWindow(f, view));
+                    else if (view.TrialDue.Length > 0 || view.RewardsDue.Count > 0) root.Children.Add(GuildSideWindow(f, view));
                 }
             }
             else if (s_journal && view is not null) root.Children.Add(Journal(f, view));
@@ -479,7 +487,7 @@ public sealed class GuildUi : IUiExtension
             $"Adventurers' Guild  -  {clerk?.FactionName}{(clerk is { TownName.Length: > 0 } ? ", " + clerk.TownName : "")}", _close, out var body);
 
         string next = view.NextRankAt < 0 ? "top rank" : $"next rank at {view.NextRankAt}";
-        body.Children.Add(Label("rq-rep", $"Guild rank {Ranks.Name(view.Rank)}   ·   Rep to spend {view.Balance}   ·   Lifetime rep {view.Lifetime} ({next})",
+        body.Children.Add(Label("rq-rep", $"Guild rank {Ranks.Name(view.Rank)}{(view.Member ? $" ({GuildSystem.Title(view.Rank)})" : " (not a member yet)")}   ·   Rep to spend {view.Balance}   ·   Lifetime rep {view.Lifetime} ({next})",
             _text[lv], small));
 
         // The faction tab ranks by your points with the clerk's faction.
@@ -648,6 +656,46 @@ public sealed class GuildUi : IUiExtension
     }
 
     /// <summary>
+    /// The guild side window beside the clerk's (his design, 2026-11-25): the trial now due (entry or rank) with its button, and a rank
+    /// reward to pick, from a wide list: every weapon kind, every armour class and slot, a backpack, medical supplies, a purse of cats.
+    /// </summary>
+    UiNode GuildSideWindow(UiFrameContext f, GuildView view)
+    {
+        var win = WindowLayout.Place("guildside", f.Viewport, 520, 320);
+        int lv = win.Font;
+        float s = win.Scale, line = Math.Max(30, 30 * s), small = Math.Max(24, 24 * s);
+        var w = Frame("rq-side", "guildside", win, view.Member ? $"Guild rank {Ranks.Name(view.Rank)}: {GuildSystem.Title(view.Rank)}" : "Join the guild", _close, out var body);
+        if (view.TrialDue.Length > 0)
+        {
+            var row = Row("rq-side-trial", line);
+            row.Children.Add(Label("rq-side-tt", view.TrialDue, _text[lv], line, new UiLength(-170 * s, 1)));
+            row.Children.Add(Button("rq-side-tb", "Take the trial", _trial, "", true, 160 * s, lv, false, line));
+            body.Children.Add(row);
+            body.Children.Add(Label("rq-side-th", "Win it and hand it in here. Failing or giving it up costs nothing.", _dim[lv], small));
+        }
+        if (view.RewardsDue.Count > 0)
+        {
+            int rank = view.RewardsDue[0];
+            body.Children.Add(Label("rq-side-rh", $"Rank {Ranks.Name(rank)} reward: pick one (gear comes at a grade for the rank).", _title[lv], line));
+            var list = Scroll("rq-side-rl", Math.Max(line * 3, win.H - 12 * 2 - Math.Max(32, 30 * s) - line * 2 - small - 12), line);
+            foreach (var group in new[] { "Weapon", "Armour", "Other" })
+            {
+                var picks = view.RewardChoices.Where(c => c.Group == group).ToList();
+                for (int i = 0; i < picks.Count; i += 3)
+                {
+                    var row = Row($"rq-side-r{group}{i}", line);
+                    row.Children.Add(Label($"rq-side-rg{group}{i}", i == 0 ? group : "", _dim[lv], line, new UiLength(90 * s, 0)));
+                    foreach (var c in picks.Skip(i).Take(3))
+                        row.Children.Add(Button($"rq-side-rc-{c.Key}", c.Label, _reward, $"{rank}|{c.Key}", true, 170 * s, lv, false, line));
+                    list.Children.Add(row);
+                }
+            }
+            body.Children.Add(list);
+        }
+        return w;
+    }
+
+    /// <summary>
     /// The quest journal (key G, or click the tracker's title): every quest you hold, two lines each (what, how far, time; for whom, where,
     /// pay), with Abandon, in a list that scrolls. Handing in still needs a clerk.
     /// </summary>
@@ -656,7 +704,7 @@ public sealed class GuildUi : IUiExtension
         var win = WindowLayout.Place("journal", f.Viewport, 560, 300);
         int lv = win.Font;
         float s = win.Scale, line = Math.Max(30, 30 * s), small = 26 * s;
-        var w = Frame("rq-journal", "journal", win, $"Guild quests  -  rank {Ranks.Name(view.Rank)}   ·   {view.Quests.Count} taken", _journal, out var body);
+        var w = Frame("rq-journal", "journal", win, $"Guild quests  -  rank {Ranks.Name(view.Rank)}{(view.Member ? $", {GuildSystem.Title(view.Rank)}" : "")}   ·   {view.Quests.Count} taken", _journal, out var body);
         float headH = Math.Max(32, 30 * s);
         var list = Scroll("rq-j-list", Math.Max(60, win.H - 12 * 2 - headH - 6 - 18 - 6), line + small + 12);
         if (view.Quests.Count == 0) list.Children.Add(Label("rq-j-none", "No quests. Talk to a bartender (right click > Adventurers' Guild).", _dim[lv], line));

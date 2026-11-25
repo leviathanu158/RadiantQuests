@@ -41,6 +41,11 @@ public sealed record GuildView(long Tick, double Hours, long Lifetime, long Bala
     IReadOnlyDictionary<int, BoardView> Boards, IReadOnlyDictionary<CharacterId, ClerkInfo> Clerks,
     IReadOnlyDictionary<string, FactionStanding> Factions)
 {
+    /// <summary>Progression: a member yet, the trial the clerk would give now ("" none), the ranks whose reward is due, and the choices.</summary>
+    public bool Member { get; init; } = true;
+    public string TrialDue { get; init; } = "";
+    public IReadOnlyList<int> RewardsDue { get; init; } = [];
+    public IReadOnlyList<RewardChoice> RewardChoices { get; init; } = [];
     /// <summary>The pick window's list (a hand-in of goods being chosen), or null.</summary>
     public HandInView? HandIn { get; init; }
 }
@@ -84,7 +89,8 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
 
     static Catalog Cat => RadiantQuestsMod.Catalog;
 
-    int Rank => _set.RankOf(_s.Lifetime);
+    /// <summary>Your guild rank: the one your trials have won (no higher than your rep allows); with trials off, the one your rep gives.</summary>
+    int Rank => RadiantQuestsMod.Settings.Trials ? Math.Min(_s.Promoted, _set.RankOf(_s.Lifetime)) : _set.RankOf(_s.Lifetime);
 
     /// <summary>Your rank on <paramref name="faction"/>'s Faction board (from your lifetime points with it).</summary>
     int RankWith(string faction) => _set.FactionRankOf(_s.PointsWith(faction));
@@ -110,6 +116,8 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                     case HandIn h: HandInQuest(world, h); break;
                     case Abandon a: AbandonQuest(world, a.QuestId); break;
                     case BuyRumour br: BuyBetterRumour(world, br); break;
+                    case TakeTrialCmd tt: TakeTrial(world, tt.Clerk); break;
+                    case ClaimRankReward rr: ClaimReward(world, rr); break;
                     case AskTownsfolk at: AskTown(world, at); break;
                     case ShowHandIn sh: OpenHandIn(world, sh.Clerk, sh.QuestId); break;
                     case HandInPicked hp: HandInPick(world, hp); break;
@@ -117,7 +125,13 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                         if (_s.Quests.FirstOrDefault(x => x.Id == tm.QuestId) is { } hq) { hq.MarkersHidden = !hq.MarkersHidden; _dirty = true; }
                         break;
                     case TestKill k: TestCount(world, k.TargetId); break;
-                    case TestRep r: GainRep(r.Amount); break;
+                    case TestRepRaw rr2: GainRep(rr2.Amount); break;
+                    case TestRep r:
+                        GainRep(r.Amount);
+                        // (Testing only: the test channel and the debug key also make you a member at the rank your rep gives.)
+                        _s.Member = true;
+                        _s.Promoted = Math.Max(_s.Promoted, _set.RankOf(_s.Lifetime));
+                        break;
                     case TestFinish f: TestFinishQuest(world, f.QuestId); break;
                     case TestOfferCmd to: TestOffer(world, to.Clerk, to.Kind, to.Rank, to.Take, to.Filter); break;
                     case TestGiveItem tg:
@@ -216,8 +230,12 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
 
     long _lastFailLog = long.MinValue / 2;
 
+    /// <summary>The rank reward choices (made from the catalog once).</summary>
+    List<RewardChoice>? _rewardChoices;
+
     public void Ready(World world, bool fromSave)
     {
+        MigrateProgression();
         ScanClerks(world);
         Publish(world);
         RadiantQuestsMod.Detail($"world ready ({(fromSave ? "save" : "new game")}): {_s.Quests.Count} quests, rep {_s.Lifetime}/{_s.Balance}, "
@@ -335,7 +353,13 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             RadiantQuestsMod.Toast($"Prove yourself to the guild first: {clerk.FactionName} gives its own work from guild rank {Ranks.Name(_set.FactionFromRank)}.");
             return;
         }
-        if (offer.Rank > rank)
+        // Not yet a member (his rule): the entry trial first.
+        if (RadiantQuestsMod.Settings.Trials && !_s.Member && offer.Trial != 1)
+        {
+            RadiantQuestsMod.Toast("Join the guild first: take the entry trial (the Trial button at the clerk).");
+            return;
+        }
+        if (offer.Rank > rank && offer.Trial == 0)
         {
             RadiantQuestsMod.Toast(a.Faction
                 ? $"You need rank {Ranks.Name(offer.Rank)} with {clerk.FactionName} for that quest."
@@ -374,6 +398,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             DestSite = offer.DestSite,
             Carrier = offer.Carrier,
             MinWorth = offer.MinWorth,
+            Trial = offer.Trial,
         };
         // Taken or not, the offer is used up: a cleared board stays cleared until it refreshes.
         offer.Taken = true;
@@ -436,12 +461,14 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             rep = guildRep;
         }
         GainRep(rep);
+        if (q.Trial > 0) TrialDone(q);
     }
 
     void AbandonQuest(World world, int id)
     {
         var q = _s.Quests.FirstOrDefault(x => x.Id == id);
         if (q is null) return;
+        if (TrialEnded(world, q, "given up")) return;
         if (SettleDelivered(world, q, "given up")) return;
         // Nothing of it can be found now (no target marked, none defeated): not your fault, so giving it up is free.
         // (Fights only: an item quest shows no marker by design, a supply quest's goods can always be bought.)
@@ -488,6 +515,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// </summary>
     void FailQuest(World world, Quest q, string why)
     {
+        if (TrialEnded(world, q, $"failed ({why})")) return;
         if (SettleDelivered(world, q, $"ended ({why})")) return;
         End(world, q);
         int cost = (int)Math.Round(q.Rep * _set.FailCost * Math.Max(1, q.PenaltyMult));
@@ -555,7 +583,12 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         _s.Lifetime += amount;
         _s.Balance += amount;
         _dirty = true;
-        if (Rank > before) RadiantQuestsMod.Toast($"Guild rank up! You are now rank {Ranks.Name(Rank)}: harder, better-paid quests are open.");
+        if (RadiantQuestsMod.Settings.Trials)
+        {
+            if (EarnedRank > _s.Promoted && _set.RankOf(_s.Lifetime - amount) <= _s.Promoted && _s.Member)
+                RadiantQuestsMod.Toast($"You have the rep for guild rank {Ranks.Name(_s.Promoted + 1)}: take the rank trial at a guild clerk.");
+        }
+        else if (Rank > before) RadiantQuestsMod.Toast($"Guild rank up! You are now rank {Ranks.Name(Rank)}: harder, better-paid quests are open.");
     }
 
     void LoseRep(int amount)
@@ -919,7 +952,14 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             standings[f] = new FactionStanding(fr, _s.PointsWith(f), _set.FactionNextAt(fr), Access.Relation(_data.FactionIndex(f), _data.PlayerFaction));
         }
         Volatile.Write(ref s_view, new GuildView(world.Tick, world.GameHours, _s.Lifetime, _s.Balance, rank, _set.NextRankAt(rank), quests, boards,
-            new Dictionary<CharacterId, ClerkInfo>(_clerks), standings) { HandIn = _handInView });
+            new Dictionary<CharacterId, ClerkInfo>(_clerks), standings)
+        {
+            HandIn = _handInView,
+            Member = _s.Member || !RadiantQuestsMod.Settings.Trials,
+            TrialDue = TrialDue() is { } due ? due.Kind == 1 ? "Entry trial: an easy fight to join the guild." : $"Rank trial for rank {Ranks.Name(due.Rank)}: a hard fight." : "",
+            RewardsDue = [.. _s.RewardsDue],
+            RewardChoices = _s.RewardsDue.Count > 0 ? (_rewardChoices ??= RewardChoices()) : [],
+        });
     }
 
     public void Hash(ref StateHasher hasher)
@@ -937,6 +977,8 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         try
         {
             _s = JsonSerializer.Deserialize<GuildState>(stream, s_json) ?? new GuildState();
+            _s.RewardsDue ??= [];
+            MigrateProgression();
             _s.Quests ??= [];
             _s.Boards ??= [];
             _s.FactionPoints = new Dictionary<string, long>(_s.FactionPoints ?? [], StringComparer.Ordinal);

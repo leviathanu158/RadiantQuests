@@ -529,12 +529,13 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
     /// Gives <paramref name="quantity"/> of <paramref name="record"/> to <paramref name="to"/>, tagged <paramref name="tag"/>: into the inventory,
     /// and what does not fit on the ground at the character's feet (never lost). False when the record or the character is not there.
     /// </summary>
-    public bool Give(World world, CharacterId to, string record, int quantity, string tag = "") => Guard(Area.Items, false, () =>
+    public bool Give(World world, CharacterId to, string record, int quantity, string tag = "", int level = -1) => Guard(Area.Items, false, () =>
     {
         var table = world.Characters;
         if (!table.TryResolveNext(to, out int s) || table.Cold(s)?.Inventory is not { } inv) return false;
-        if (data.Items.Create(record, Math.Max(1, quantity)) is not { } item) return false;
+        if (data.Items.Create(record, Math.Max(1, quantity), Math.Max(0, level)) is not { } item) return false;
         item.ModTag = tag;
+        if (level >= 0) item.Level = level;   // gear's grade (a rank reward)
         if (!inv.Add(item)) world.GroundItems.Drop(item, table.Next[s].Position, 0);
         return true;
     });

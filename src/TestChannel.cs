@@ -153,6 +153,23 @@ internal static class TestChannel
                 if (p.Length < 3) return "offer <kind> <rank>";
                 Send(new TestOfferCmd(clerks[s_openIndex].Id, p[1], Arg(2), p[0] == "take", string.Join(" ", p.Skip(3))) { Tick = tick });
                 return "sent (see log: test offer)";
+            case "repraw":
+                Send(new TestRepRaw(Arg(1)) { Tick = tick });
+                return "sent";
+            case "trial":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new TakeTrialCmd(clerks[s_openIndex].Id) { Tick = tick });
+                return "sent";
+            case "reward":
+                // reward <rank> <choice key: a group key, pack, med or cats>
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                if (p.Length < 3) return "reward <rank> <choice>";
+                Send(new ClaimRankReward(clerks[s_openIndex].Id, Arg(1), p[2]) { Tick = tick });
+                return "sent";
+            case "progress":
+                return view is null ? "no view" : $"member {view.Member}, rank {Ranks.Name(view.Rank)}, trial due: {view.TrialDue}, rewards due: "
+                    + string.Join(",", view.RewardsDue.Select(Ranks.Name)) + $" ({view.RewardChoices.Count} choices: "
+                    + string.Join(" ", view.RewardChoices.Take(8).Select(c => c.Key)) + ")";
             case "asktown":
                 // A townsperson's answer (the open clerk stands in for one).
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";

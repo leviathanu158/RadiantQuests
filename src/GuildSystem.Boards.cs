@@ -418,7 +418,7 @@ public sealed partial class GuildSystem
     {
         Kind = o.Kind, TargetId = o.TargetId, TargetName = o.TargetName, Rank = o.Rank, Need = o.Need, Group = o.Group, GroupSize = o.GroupSize,
         PlatoonKey = o.PlatoonKey, Score = o.Score, Stray = o.Stray, HasAt = o.HasAt, AtX = o.AtX, AtZ = o.AtZ, Dangerous = o.Dangerous,
-        Age = o.Age, Strays = o.Strays, DestSite = o.DestSite, Carrier = o.Carrier, MinWorth = o.MinWorth, Hours = o.Hours,
+        Age = o.Age, Strays = o.Strays, DestSite = o.DestSite, Carrier = o.Carrier, MinWorth = o.MinWorth, Hours = o.Hours, Trial = o.Trial,
     };
 
     /// <summary>

@@ -41,6 +41,10 @@ public sealed class GuildSettings
         Hint = "Off (default): hunt and kill targets are found by rumour, and marked only once one of your characters is close. On: always marked (for testing, or if you prefer).")]
     public bool FightMarkersAlways { get; set; }
 
+    [Setting("Guild trials", SubGroup = "Ranks",
+        Hint = "On (default): a newcomer joins the guild by an entry trial, and each new rank is won by a trial fight once your rep has earned it. Off: rep alone sets your rank.")]
+    public bool Trials { get; set; } = true;
+
     [Setting("Rep for rank D", Min = 5, Max = 2000, Step = 5, SubGroup = "Ranks",
         // (His defaults: 2026-11-24 two thirds of the earlier ones, his call after play: ~10 quests of a rank for D and C, ~7-10 of the rank below later.)
         Hint = "Lifetime rep needed for rank D (you start at E; about 10 E quests). Each later rank needs about 7 to 10 quests of the rank below. Spending rep at the store never lowers your rank.")]
