@@ -87,6 +87,14 @@ public sealed class Offer
     public float Age = 1;
     /// <summary>A few pack animals wandered off from their pack (E and D): "Hunt 3 Goat (strays)".</summary>
     public bool Strays;
+    /// <summary>Item quests: the town (site) the goods go to (courier), or -1.</summary>
+    public int DestSite = -1;
+    /// <summary>Recover quests: who carries the item (a faction id).</summary>
+    public string Carrier = "";
+    /// <summary>Gear quests: the least worth (cats, the game's own price) an item must have (0: any).</summary>
+    public int MinWorth;
+    /// <summary>Its time limit in game hours (0: the usual; below 0: none).</summary>
+    public double Hours;
 
     public void SetAt(System.Numerics.Vector2 at)
     {
@@ -95,7 +103,7 @@ public sealed class Offer
         AtZ = at.Y;
     }
 
-    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays);
+    public string Describe() => Quest.Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
 }
 
 /// <summary>One town's board for one day.</summary>
@@ -174,6 +182,48 @@ public sealed class Quest
     public int Retries;
     /// <summary>How many groups were brought in for it so far (each new one is placed with a new roll).</summary>
     public int Spawns;
+    /// <summary>Item quests: the town (site) the goods go to (courier), or -1.</summary>
+    public int DestSite = -1;
+    /// <summary>Recover quests: who carries the item (a faction id).</summary>
+    public string Carrier = "";
+    /// <summary>Item quests: one of yours has held the quest's own item (a parcel, a recovered item).</summary>
+    public bool ItemHeld;
+    /// <summary>Item quests: the quest's own item has been placed in the world (given to its carrier).</summary>
+    public bool ItemPlaced;
+    /// <summary>Item quests: one of yours sold an item of the quest's record; the next check looks whether it was the quest's own.</summary>
+    public bool SaleSeen;
+    /// <summary>
+    /// What failing or abandoning costs, times the usual (his rule, 2026-11-24: a harsh penalty for a rare item picked up and then abandoned
+    /// or sold). 1 normally.
+    /// </summary>
+    public double PenaltyMult = 1;
+    /// <summary>Gear quests: the least worth an item must have (0: any).</summary>
+    public int MinWorth;
+    /// <summary>Courier: the straight distance from the clerk to the destination when taken, and the best progress made toward it (units).</summary>
+    public float StartDist, Progress;
+    /// <summary>Courier: the progress at which the next ambush roll comes, and how many ambushes came so far.</summary>
+    public float NextRoll = ItemQuestKinds.RollEvery;
+    public int Ambushes;
+    /// <summary>Courier: the ambush group chasing now (its platoon key; 0 none), since when (game hours), and the tick it was last given orders.</summary>
+    public ulong AmbushKey;
+    public double AmbushSince;
+    public long AmbushOrdered;
+    /// <summary>Courier: where the ambush last knew the courier to be (a sneaking courier unseen is searched for there).</summary>
+    public float SeenX, SeenZ;
+    /// <summary>Courier: when the ambush stole the parcel (game hours; below 0: not stolen). Won back within the hour, or it fails.</summary>
+    public double StolenSince = -1;
+    /// <summary>Gear quests: the worth of the best matching item your characters carry (the journal's "your best").</summary>
+    public int Best;
+    /// <summary>Test channel only: the next ambush roll hits, wherever the courier is.</summary>
+    public bool ForceAmbush;
+    /// <summary>Item quests: what the clerk told you of where to get it (kept, so it can be read again), and how good it is (0 free, 1, 2).</summary>
+    public string Rumour = "";
+    public int RumourLevel;
+    /// <summary>Its markers are hidden on the map (the journal's Hide).</summary>
+    public bool MarkersHidden;
+    /// <summary>The place the best rumour names (marked on the map once bought, his rule 2026-11-24), if any.</summary>
+    public bool HasHint;
+    public float HintX, HintZ;
 
     /// <summary>The most broken spawns a quest replaces; after that the usual fallbacks (count drops, or called off with no penalty).</summary>
     public const int MostRetries = 5;
@@ -212,13 +262,16 @@ public sealed class Quest
         }
     }
 
-    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays);
+    public string Describe() => Describe(Kind, Need, TargetName, Group, GroupSize, StartsWar, Dangerous, Age, Strays, MinWorth);
+
+    /// <summary>For the windows: a worth target also says the best matching item you carry.</summary>
+    public string DescribeWithBest() => Describe() + (MinWorth > 0 && !Done ? Best > 0 ? $" (your best: {Best:N0})" : " (you carry none)" : "");
 
     /// <summary>A few pack animals that wandered off (see <see cref="Offer.Strays"/>).</summary>
     public bool Strays;
 
     public static string Describe(string kind, int need, string target, bool group = false, int groupSize = 0, bool startsWar = false,
-        bool dangerous = false, float age = 1, bool strays = false)
+        bool dangerous = false, float age = 1, bool strays = false, int minWorth = 0)
     {
         // The count is the whole group (his rule, 2026-11-23: no margin), so no "(group of N)" / "(N needed)" any more.
         string of = strays ? " (strays)" : "";
@@ -227,6 +280,13 @@ public sealed class Quest
             _ when group || kind == GroupQuest.KindId => $"Wipe out a group of {groupSize} {target}",
             LairQuest.KindId => $"Clear {target}: defeat everyone at the camp (about {groupSize})",
             // No age words (his call, 2026-11-23: herds are mixed); the ages count in the difficulty and pay only.
+            // Item quests (ItemQuests.cs): the target is the item (courier: the destination town).
+            ItemQuestKinds.Gear => need == 1 ? $"Bring {GearOne(target)} worth about {minWorth:N0} cats"
+                : $"Bring {need} {GearMany(target)} worth about {minWorth:N0} cats each",
+            ItemQuestKinds.Supply => $"Bring {need} {target}",
+            ItemQuestKinds.Find => need == 1 ? $"Find {Article(target)} {target}" : $"Find {need} {target}",
+            ItemQuestKinds.Courier => $"Deliver a guild parcel to {target}",
+            ItemQuestKinds.Recover => $"Recover the stolen {target}",
             Catalog.Hunt => $"Hunt {need} {target}{of}",
             // One person alone (brought in, or a real one wandering): a loner (his rule, 2026-11-23: no set chance, just a roll of one).
             Catalog.Cull when need == 1 && groupSize == 1 => $"Defeat {(("AEIOU".Contains(char.ToUpperInvariant(Loner(target)[0]))) ? "an" : "a")} {Loner(target)} Loner",
@@ -237,7 +297,18 @@ public sealed class Quest
         return startsWar ? $"{text} - makes {target} hostile to you" : text;
     }
 
+    /// <summary>One piece of a gear group: "a katana", "a pair of light boots", "a piece of heavy body armour".</summary>
+    static string GearOne(string g) => g.EndsWith('s') ? $"a pair of {g}" : g.EndsWith("armour") ? $"a piece of {g}" : $"{Article(g)} {g}";
+
+    /// <summary>Several of a gear group: "katanas", "pairs of light boots", "pieces of heavy body armour".</summary>
+    static string GearMany(string g) => g.EndsWith('s') ? $"pairs of {g}" : g.EndsWith("armour") ? $"pieces of {g}" : g + "s";
+
+    /// <summary>"a" or "an" for <paramref name="word"/>.</summary>
+    static string Article(string word) => word.Length > 0 && "AEIOUaeiou".Contains(word[0]) ? "an" : "a";
+
     /// <summary>A faction's name as one of its people: "Dust Bandits" -> "Dust Bandit", "The Holy Nation" -> "Holy Nation".</summary>
+    public static string LonerName(string faction) => Loner(faction) + " Loner";
+
     static string Loner(string faction)
     {
         string s = faction.Trim();
@@ -296,7 +367,32 @@ public sealed class Quest
         foreach (var b in Broken) h.Add(Rng.StableHash(b));
         h.Add(Retries);
         h.Add(Spawns);
+        h.Add(DestSite);
+        h.Add(Rng.StableHash(Carrier));
+        h.Add(ItemHeld);
+        h.Add(ItemPlaced);
+        h.Add(SaleSeen);
+        h.Add(PenaltyMult);
         h.Add(Strays);
+        h.Add(MinWorth);
+        h.Add(StartDist);
+        h.Add(Progress);
+        h.Add(NextRoll);
+        h.Add(Ambushes);
+        h.Add(AmbushKey);
+        h.Add(AmbushSince);
+        h.Add(AmbushOrdered);
+        h.Add(SeenX);
+        h.Add(SeenZ);
+        h.Add(StolenSince);
+        h.Add(Best);
+        h.Add(ForceAmbush);
+        h.Add(Rng.StableHash(Rumour));
+        h.Add(RumourLevel);
+        h.Add(MarkersHidden);
+        h.Add(HasHint);
+        h.Add(HintX);
+        h.Add(HintZ);
     }
 }
 
@@ -393,6 +489,10 @@ public sealed class GuildState
                 h.Add(o.StartsWar);
                 h.Add(o.Age);
                 h.Add(o.Strays);
+                h.Add(o.DestSite);
+                h.Add(Rng.StableHash(o.Carrier));
+                h.Add(o.MinWorth);
+                h.Add(o.Hours);
             }
         }
     }
@@ -419,6 +519,18 @@ public sealed record HandIn(CharacterId Clerk, int QuestId) : GuildCommand;
 /// <summary>Give up a quest.</summary>
 public sealed record Abandon(int QuestId) : GuildCommand;
 
+/// <summary>Pay the clerk for a better rumour of where a quest's item is.</summary>
+public sealed record BuyRumour(CharacterId Clerk, int QuestId) : GuildCommand;
+
+/// <summary>Open the pick window for handing in a quest's goods (the clerk lists what your characters there carry).</summary>
+public sealed record ShowHandIn(CharacterId Clerk, int QuestId) : GuildCommand;
+
+/// <summary>Hand in the goods picked in the pick window (their keys in its list).</summary>
+public sealed record HandInPicked(CharacterId Clerk, int QuestId, IReadOnlyList<int> Keys) : GuildCommand;
+
+/// <summary>Hide or show a quest's markers on the map.</summary>
+public sealed record ToggleMarkers(int QuestId) : GuildCommand;
+
 /// <summary>Test channel only: count a kill of <paramref name="TargetId"/> for your quests as if one of your characters made it.</summary>
 public sealed record TestKill(string TargetId) : GuildCommand;
 
@@ -439,3 +551,12 @@ public sealed record TestBreakSpawn(int QuestId) : GuildCommand;
 
 /// <summary>Test channel only: counts kills for quest <paramref name="QuestId"/> until it is done.</summary>
 public sealed record TestFinish(int QuestId) : GuildCommand;
+
+/// <summary>Test channel only: one offer of a kind and rank on the clerk's board.</summary>
+public sealed record TestOfferCmd(CharacterId Clerk, string Kind, int Rank, bool Take = false, string Filter = "") : GuildCommand;
+
+/// <summary>Test channel only: a courier quest's next ambush roll comes now and always hits.</summary>
+public sealed record TestAmbush(int QuestId) : GuildCommand;
+
+/// <summary>Test channel only: logs a courier quest's parcel, courier and ambush.</summary>
+public sealed record TestCourier(int QuestId) : GuildCommand;

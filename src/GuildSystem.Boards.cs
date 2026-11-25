@@ -35,6 +35,37 @@ public sealed partial class GuildSystem
         return board;
     }
 
+    /// <summary>
+    /// Test channel only: puts one offer of quest kind <paramref name="kind"/> at rank <paramref name="rank"/> on the clerk's General board (its
+    /// first candidate there), paid as the board pays, so one item quest can be tested alone. Logs what it made.
+    /// </summary>
+    void TestOffer(World world, CharacterId clerk, string kind, int rank, bool take = false, string filter = "")
+    {
+        if (!_clerks.TryGetValue(clerk, out var info) || QuestTypes.Of(kind) is not { } type) { RadiantQuestsMod.Log($"test offer: no clerk or kind {kind}"); return; }
+        var board = BoardFor(world, info);
+        var at = new Vector2(info.Position.X, info.Position.Z);
+        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)world.Tick + 0x7465));
+        var survey = Survey.Of(world, Access, Cat, at, _set.TargetRange);
+        // With a filter: new rolls until an offer's target name has it (at most 60).
+        Candidate? pick = null;
+        for (int roll = 0; roll < 60 && pick is null; roll++)
+        {
+            var rctx = new BoardContext(world, this, survey, Tab.General, _data.FactionIndex(info.Faction), info.Faction,
+                new Dice(world.Seed ^ Rng.Mix((ulong)world.Tick * 131 + (ulong)roll + 0x7465)), info.Site);
+            foreach (var c in type.Candidates(rctx, Math.Clamp(rank, 0, Ranks.Top)))
+                if (filter.Length == 0 || c.Offer.TargetName.Contains(filter, StringComparison.OrdinalIgnoreCase)) { pick = c; break; }
+            if (filter.Length == 0) break;
+        }
+        if (pick is not { } made) { RadiantQuestsMod.Log($"test offer: no {kind} at {Ranks.Name(rank)}{(filter.Length > 0 ? $" matching {filter}" : "")}"); return; }
+        var o = Clone(made.Offer);
+        (o.Cats, o.Rep) = Difficulty.Pay(o.Score, o.Rank, dice.Double(), dice.Double());
+        o.Slot = board.Offers.Count;
+        board.Offers.Add(o);
+        _dirty = true;
+        RadiantQuestsMod.Log($"test offer [{o.Slot}]: {Ranks.Name(o.Rank)} {o.Describe()} {o.Cats}c (score {o.Score:0}, target {o.TargetId}, min worth {o.MinWorth}, hours {o.Hours})");
+        if (take) Accept(world, new AcceptOffer(clerk, info.Site, o.Slot) { Tick = world.Tick });
+    }
+
     /// <summary>Replaces the offers not taken yet, for a little rep.</summary>
     void Reroll(World world, CharacterId clerk)
     {
@@ -77,8 +108,9 @@ public sealed partial class GuildSystem
         foreach (var o in board.Offers.Concat(board.FactionOffers).Where(o => o.Taken)) used.Add(KeyOf(o));
         var allGroups = _set.DangerShare > 0 ? Access.Groups(world) : [];
         bool faction = giver >= 0 && _set.FactionQuests;
-        var generalPools = Pools(world, survey, Tab.General, giver, board.GiverFaction, dice, allGroups);
-        var factionPools = faction ? Pools(world, survey, Tab.Faction, giver, board.GiverFaction, dice, allGroups) : null;
+        _boardSite = board.Site;
+        var generalPools = Pools(world, survey, Tab.General, giver, board.GiverFaction, dice, allGroups, board.Site);
+        var factionPools = faction ? Pools(world, survey, Tab.Faction, giver, board.GiverFaction, dice, allGroups, board.Site) : null;
         var notGeneral = new HashSet<string>(StringComparer.Ordinal);
         var notFaction = new HashSet<string>(StringComparer.Ordinal);
         if (factionPools is not null)
@@ -98,13 +130,16 @@ public sealed partial class GuildSystem
             + " | faction: " + string.Join("; ", board.FactionOffers.Select(o => $"{Ranks.Name(o.Rank)} {o.Describe()}")));
     }
 
+    /// <summary>The site of the board being made (for the fallbacks that build their own context).</summary>
+    int _boardSite = -1;
+
     /// <summary>A quest that fits both tabs goes to the General tab this often (else the Faction tab).</summary>
     const double GeneralShare = 0.6;
 
     /// <summary>Every quest type's candidates for <paramref name="tab"/>, by rank (after the area's danger, which may lift one a rank).</summary>
-    List<Candidate>[] Pools(World world, Survey survey, Tab tab, int giver, string giverId, Dice dice, IReadOnlyList<GroupInfo> allGroups)
+    List<Candidate>[] Pools(World world, Survey survey, Tab tab, int giver, string giverId, Dice dice, IReadOnlyList<GroupInfo> allGroups, int site = -1)
     {
-        var ctx = new BoardContext(world, this, survey, tab, giver, giverId, dice);
+        var ctx = new BoardContext(world, this, survey, tab, giver, giverId, dice, site);
         var byRank = new List<Candidate>[Ranks.Top + 1];
         for (int b = 0; b <= Ranks.Top; b++) byRank[b] = [];
         foreach (var type in QuestTypes.All.Where(t => t.Offered(_set, tab)))
@@ -135,34 +170,56 @@ public sealed partial class GuildSystem
         {
             int most = Math.Max(1, _set.MostPerRank);
             int cap = dice.Int(Math.Min(5, most), most);
-            var present = byRank[b].Where(c => c.Present).ToList();
-            var local = byRank[b].Where(c => !c.Present && !c.Offer.Stray).ToList();
-            var stray = byRank[b].Where(c => c.Offer.Stray).ToList();
-            int have = offers.Count(o => o.Rank == b);
-            while (have < cap && Pick(present, used, offers, dice)) have++;
+            // Item work is never "real things around" (his rule, 2026-11-24): it competes for the slots by a roll, fight or item, each slot.
+            var items = byRank[b].Where(c => IsItemKind(c.Offer.Kind)).ToList();
+            var present = byRank[b].Where(c => c.Present && !IsItemKind(c.Offer.Kind)).ToList();
+            var local = byRank[b].Where(c => !c.Present && !c.Offer.Stray && !IsItemKind(c.Offer.Kind)).ToList();
+            var stray = byRank[b].Where(c => c.Offer.Stray && !IsItemKind(c.Offer.Kind)).ToList();
+            int have = offers.Count(o => o.Rank == b), itemsUp = 0;
+            // Real fights around: each slot rolls fight or item work (real fights weigh RealFightWeight to 1); a fight while real ones last.
+            if (present.Count > 0)
+                while (have < cap)
+                {
+                    bool item = items.Count > 0 && dice.Chance(1.0 / (1 + RealFightWeight));
+                    if (item && Pick(items, used, offers, dice)) { have++; itemsUp++; continue; }
+                    if (!Pick(present, used, offers, dice)) break;
+                    have++;
+                }
             // After the real ones: each slot left up to the cap rolls to bring a new kind in (60% at or below your rank, 40% one above, 15%
             // higher). A rank with nothing real: above yours, rarely one or two (BoardCount); at yours, only by the high-rank odds.
             // At ranks you have reached, a minimum (E and D 3, C 2, B 1) is filled with brought-in work if the real ones fall short; the
             // slots above it roll (60% at or below your rank, 40% one above, 15% higher). A rank with nothing real: above yours, rarely one
             // or two (BoardCount); at yours (A and up), only by the high-rank odds. Brought-in A, S and SS work is capped per board (3, 2, 1).
+            // A slot that passes then rolls fight or item work (even); a slot that fails its roll still becomes item work now and then
+            // (ItemFallback), else it stays empty (his rule: a quiet place may have gaps).
             int must = b <= myRank ? Math.Max(0, MinimumAt(b) - have) : 0;
-            int bring = must;
+            int bring = must, failed = 0;
             if (have == 0 && b > myRank) bring = BoardCount(dice, b, myRank);
             else if (have > 0 || must > 0 || dice.Chance(EmptyRankChance(b, myRank)))
                 for (int slot = have + must; slot < cap; slot++)
                     if (dice.Chance(BringChance(b, myRank))) bring++;
-            bring = Math.Min(bring, Math.Max(0, BroughtCap(b) - brought[b]));
-            int before = have;
+                    else failed++;
+            int before = have, fights = 0;
             for (int i = 0; i < bring && have < cap; i++)
             {
+                bool item = items.Count > 0 && dice.Chance(0.5);
+                if (item && Pick(items, used, offers, dice)) { have++; itemsUp++; continue; }
+                if (brought[b] + fights >= BroughtCap(b))
+                {
+                    if (!item && Pick(items, used, offers, dice)) { have++; itemsUp++; }
+                    continue;
+                }
                 // The roll within the roll: now and then the new kind comes from outside the region.
                 var pool = stray.Count > 0 && dice.Chance(_set.StrayChance) ? stray : local;
-                if (!Pick(pool, used, offers, dice) && !Pick(pool == stray ? local : stray, used, offers, dice)) break;
-                have++;
+                if (Pick(pool, used, offers, dice) || Pick(pool == stray ? local : stray, used, offers, dice)) { have++; fights++; continue; }
+                if (!item && Pick(items, used, offers, dice)) { have++; itemsUp++; continue; }
+                break;
             }
-            brought[b] += have - before;
+            for (int i = 0; i < failed && have < cap; i++)
+                if (items.Count > 0 && dice.Chance(ItemFallback) && Pick(items, used, offers, dice)) { have++; itemsUp++; }
+            brought[b] += fights;
             RadiantQuestsMod.Detail($"{tab} {Ranks.Name(b)} (you {Ranks.Name(myRank)}): cap {cap}, real {present.Count} -> {before} up, "
-                + $"brought in {have - before} (minimum {must}, local {local.Count}, other regions {stray.Count})");
+                + $"brought in {fights}, item work {itemsUp} (minimum {must}, local {local.Count}, other regions {stray.Count}, item kinds {items.Count})");
         }
         // Always something you can take at your own rank, when anything around (or local) can make it.
         int own = Math.Clamp(myRank, floor, Ranks.Top);
@@ -175,7 +232,7 @@ public sealed partial class GuildSystem
         // General kinds of work (at your rank or below) are posted as its own work.
         if (tab == Tab.Faction && !offers.Any(o => o.Rank <= own))
         {
-            var local = new BoardContext(world, this, survey, Tab.General, giver, giverId, dice);
+            var local = new BoardContext(world, this, survey, Tab.General, giver, giverId, dice, _boardSite);
             var generalTypes = QuestTypes.All.Where(t => t.Offered(_set, Tab.General)).ToList();
             for (int b = own; b >= floor; b--)
             {
@@ -303,6 +360,13 @@ public sealed partial class GuildSystem
             && !(c.Offer.PlatoonKey == 0 && FightKeyOf(c.Offer) is { } fight && used.Contains(fight))).ToList();
         // Each kind of quest gets a fair turn (a town with thirty kinds of animal around still shows its camps and groups): a kind first,
         // evenly among those with something to offer, then one of its offers by weight.
+        // Item work is one family of kinds (supply, gear, find, courier, recover) sharing about a third of the turns, so its five kinds don't
+        // crowd out the fights.
+        if (from.Any(c => IsItemKind(c.Offer.Kind)) && from.Any(c => !IsItemKind(c.Offer.Kind)))
+        {
+            bool items = dice.Chance(ItemShare);
+            from = [.. from.Where(c => IsItemKind(c.Offer.Kind) == items)];
+        }
         var kinds = from.Select(c => c.Offer.Kind).Distinct().OrderBy(k => k, StringComparer.Ordinal).ToList();
         if (kinds.Count == 0) return false;
         string kind = kinds[dice.Int(0, kinds.Count - 1)];
@@ -316,6 +380,18 @@ public sealed partial class GuildSystem
         offers.Add(Clone(o));
         return true;
     }
+
+    /// <summary>The share of the board's turns item work gets when fights are on offer too.</summary>
+    const double ItemShare = 0.33;
+
+    /// <summary>
+    /// The board's fight and item mix (his rule, 2026-11-24: variety, nothing locked): with real fights around, a slot is a fight this many
+    /// times to one item; a slot whose bring-in roll failed becomes item work at this chance (else it stays empty).
+    /// </summary>
+    const double RealFightWeight = 2, ItemFallback = 0.5;
+
+    static bool IsItemKind(string kind) => kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find or ItemQuestKinds.Courier
+        or ItemQuestKinds.Recover;
 
     /// <summary>The enemy and rank of a fight (hunt, defeat, wipe-out, loner alike), or null for other work.</summary>
     static string? FightKeyOf(Offer o) => o.Kind is Catalog.Hunt or Catalog.Cull or GroupQuest.KindId ? $"fight:{o.Rank}:{o.TargetId}" : null;
@@ -339,7 +415,7 @@ public sealed partial class GuildSystem
     {
         Kind = o.Kind, TargetId = o.TargetId, TargetName = o.TargetName, Rank = o.Rank, Need = o.Need, Group = o.Group, GroupSize = o.GroupSize,
         PlatoonKey = o.PlatoonKey, Score = o.Score, Stray = o.Stray, HasAt = o.HasAt, AtX = o.AtX, AtZ = o.AtZ, Dangerous = o.Dangerous,
-        Age = o.Age, Strays = o.Strays,
+        Age = o.Age, Strays = o.Strays, DestSite = o.DestSite, Carrier = o.Carrier, MinWorth = o.MinWorth, Hours = o.Hours,
     };
 
     /// <summary>

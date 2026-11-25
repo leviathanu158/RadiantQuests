@@ -3,7 +3,7 @@
 #   .\scenario.ps1               start the game, run, quit the game
 #   .\scenario.ps1 -NoStart      run against a game already started with this script's settings (control dir, test env var)
 #   .\scenario.ps1 -KeepOpen     leave the game running afterwards
-param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen)
+param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen, [switch]$WithManualCombat)
 # No save named: the one closest to the mod list ticked now (his rule, 2026-11-24).
 if (-not $Save) { $Save = & (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "pick-save.ps1") -Name }
 $ErrorActionPreference = "Continue"
@@ -41,6 +41,9 @@ if (-not $NoStart) {
     Remove-Item "$D\cmd", "$D\out", "$D\rq.cmd", "$D\rq.out" -ErrorAction SilentlyContinue
     $env:KENSHI_PATH = $launcher.KenshiPath
     $env:RADIANTQUESTS_TEST_DIR = $D
+    # Manual Combat off for the run (his request, 2026-11-24: Su won't fight on the test's orders with it on); back on once the world is up.
+    & (Join-Path $here "manual-combat.ps1") -On
+    if (-not $WithManualCombat) { & (Join-Path $here "manual-combat.ps1") -Off }
     Start-Process -FilePath (Join-Path $version.FullName "MeitouClient.exe") -WorkingDirectory (Join-Path $env:LOCALAPPDATA "Meitou") `
         -ArgumentList @("--windowed", "--load", "`"$(Join-Path $env:LOCALAPPDATA "Meitou\save\$Save")`"", "--control-dir", "`"$D`"") | Out-Null
     Write-Host "started $($version.Name) with save $Save; loading..."
@@ -51,6 +54,8 @@ do {
     $fresh = $NoStart -or @(Select-String -Path $log -Pattern '^==== ').Count -gt $sessionsBefore
     $s = if ($fresh) { Session } else { @() }
 } while (-not ($s -match 'radiantquests: world ready|RadiantQuests: not loaded') -and ((Get-Date) - $t0).TotalSeconds -lt 600)
+$manualCombat = [bool](Get-Content (Join-Path $launcher.KenshiPath "data\mods.cfg") | Select-String -SimpleMatch 'ManualCombat.mod')
+& (Join-Path $here "manual-combat.ps1") -On
 Check "mod loads" ([bool]($s -match 'radiantquests: world ready')) (($s -match 'radiantquests: catalog: \d+') -join '' -replace 'mod\s+radiantquests: ', '')
 if (-not ($s -match 'radiantquests: world ready')) { $results | Set-Content (Join-Path $here "results.txt"); exit 1 }
 Agent "pause" | Out-Null
@@ -112,7 +117,6 @@ Agent "ui-click --id hud/ShortcutMapButton" | Out-Null
 $killId = if ($kill) { if ((Result (Rq @("quests"))) -match '#(\d+) Defeat') { $Matches[1] } else { "" } } else { "" }
 $record = if ($killId) { Result (Rq @("member #$killId")) } else { "none" }
 # Manual Combat takes over Su (she won't fight on the test's orders): the real fight needs it unticked.
-$manualCombat = [bool](Get-Content (Join-Path $launcher.KenshiPath "data\mods.cfg") | Select-String -SimpleMatch 'ManualCombat.mod')
 $dust = $record -and $record -ne "none" -and $record -notmatch 'no data' -and -not $manualCombat
 if ($manualCombat) { Check "a knockout by your side counts as a defeat (skipped: Manual Combat is ticked, Su won't fight on orders)" $true }
 if ($dust) {
@@ -218,7 +222,8 @@ $fboard = FactionPart $frep
 # Offers on the Faction tab carry " +Nrel" (the relation they give: none at E and D, his rule).
 $foffers = [regex]::Matches($fboard, '\[(\d+)\] (\w+) ([^|]+?) (\d+)c (\d+)r(?: \+(\d+)rel)?( taken)?( locked)?')
 Check "faction board offers quests against the faction's enemies" ($foffers.Count -gt 0) $(if ($foffers.Count -gt 0) { $fboard } else { "report: $frep" })
-$fo = $foffers | Where-Object { -not $_.Groups[7].Success -and -not $_.Groups[8].Success } | Select-Object -First 1
+# A fight (the test finishes it with "finish"; an item quest recounts what you carry, so "finish" can't complete one).
+$fo = $foffers | Where-Object { -not $_.Groups[7].Success -and -not $_.Groups[8].Success -and $_.Groups[3].Value -match '^(Defeat|Hunt|Wipe)' } | Select-Object -First 1
 if ($fo) {
     $before = Result (Rq @("factions"))
     $guild0 = Rep

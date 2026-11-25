@@ -4,7 +4,7 @@
 #   .\quick.ps1 -KeepOpen "report"
 #   .\quick.ps1 -NoStart "report"     (a game already started by this script or scenario.ps1)
 [CmdletBinding(PositionalBinding = $false)]
-param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen, [double]$WaitFirst = 0, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Commands)
+param([string]$Save = "", [switch]$NoStart, [switch]$KeepOpen, [switch]$NoManualCombat, [double]$WaitFirst = 0, [Parameter(ValueFromRemainingArguments = $true)][string[]]$Commands)
 $ErrorActionPreference = "Continue"
 if (-not $Save) { $Save = & (Join-Path (Split-Path -Parent $MyInvocation.MyCommand.Path) "pick-save.ps1") -Name }
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
@@ -20,6 +20,9 @@ function Run([double]$seconds) { Agent "resume" | Out-Null; Start-Sleep -Millise
 $sessionsBefore = if (-not (Test-Path $log)) { 0 } else { @(Select-String -Path $log -Pattern '^==== ' -ErrorAction SilentlyContinue).Count }
 if (-not $NoStart) {
     if (Get-Process MeitouClient -ErrorAction SilentlyContinue) { Write-Host "A Meitou game is running: close it first. Nothing started."; exit 2 }
+    # Manual Combat off only for the game start (Meitou reads the mod list when it starts); a copy left by a crashed run is put back first.
+    & "$here\manual-combat.ps1" -On
+    if ($NoManualCombat) { & "$here\manual-combat.ps1" -Off }
     Remove-Item "$D\cmd", "$D\out", "$D\rq.cmd", "$D\rq.out" -ErrorAction SilentlyContinue
     $env:KENSHI_PATH = $launcher.KenshiPath
     $env:RADIANTQUESTS_TEST_DIR = $D
@@ -34,11 +37,13 @@ do {
     $s = if ($fresh) { Session } else { @() }
 } while (-not ($s -match 'radiantquests: world ready|RadiantQuests: not loaded') -and ((Get-Date) - $t0).TotalSeconds -lt 600)
 $s -match 'radiantquests: (catalog|ready|world ready|paused)' | ForEach-Object { $_ -replace '^.*radiantquests: ', 'mod: ' }
-if (-not ($s -match 'radiantquests: world ready')) { Write-Host "MOD DID NOT START"; $s -match 'radiantquests|RadiantQuests' | Select-Object -Last 10; exit 1 }
+if (-not ($s -match "radiantquests: world ready")) { & "$here\manual-combat.ps1" -On; Write-Host "MOD DID NOT START"; $s -match 'radiantquests|RadiantQuests' | Select-Object -Last 10; exit 1 }
 # The world finishes loading (agent "loaded" event) well after the mod's "world ready" line.
 $t0 = Get-Date
 while (-not ((Test-Path "$D\out") -and (Select-String -Path "$D\out" -Pattern '"event":"loaded"' -Quiet)) -and ((Get-Date) - $t0).TotalSeconds -lt 600) { Start-Sleep 3 }
 Agent "pause" | Out-Null
+# The game has read the mod list by now: Manual Combat goes back on in the file (his game next time starts with it as before).
+if (-not $NoStart) { & "$here\manual-combat.ps1" -On }
 
 $t0 = Get-Date
 # Any loaded clerk will do (the save may be anywhere: pick-save.ps1 chooses it by mod list); Squin's when it is there.

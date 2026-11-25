@@ -30,7 +30,11 @@ public sealed class GuildUi : IUiExtension
 
     static readonly List<(string Text, long Until)> s_toasts = [];
 
-    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "";
+    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "";
+
+    /// <summary>The pick window's ticked lines (keys), for the quest it was opened for; a quest id whose window was closed here.</summary>
+    static readonly HashSet<int> s_picks = [];
+    static int s_pickQuest = -1, s_pickClosed = -1;
     string _move = "", _resize = "", _scale = "", _hint = "";
     /// <summary>A hint shown beside the pointer while it is over a control that has one (Meitou has no tooltips for mod controls).</summary>
     static (string Text, Vector2 At)? s_hint;
@@ -106,6 +110,36 @@ public sealed class GuildUi : IUiExtension
         _handIn = r.RegisterAction("handin", a =>
         {
             if (int.TryParse(a.Argument, out int id)) Send(new HandIn(s_clerk, id) { Tick = Tick });
+        });
+        _rumour = r.RegisterAction("rumour", a =>
+        {
+            if (int.TryParse(a.Argument, out int id)) Send(new BuyRumour(s_clerk, id) { Tick = Tick });
+        });
+        _pickOpen = r.RegisterAction("pickopen", a =>
+        {
+            if (!int.TryParse(a.Argument, out int id)) return;
+            s_picks.Clear();
+            s_pickQuest = id;
+            s_pickClosed = -1;
+            Send(new ShowHandIn(s_clerk, id) { Tick = Tick });
+        });
+        _pickToggle = r.RegisterAction("picktoggle", a =>
+        {
+            if (!int.TryParse(a.Argument, out int key)) return;
+            if (!s_picks.Remove(key)) s_picks.Add(key);
+        });
+        _pickGive = r.RegisterAction("pickgive", _ =>
+        {
+            if (s_pickQuest >= 0) Send(new HandInPicked(s_clerk, s_pickQuest, [.. s_picks.Order()]) { Tick = Tick });
+        });
+        _pickCancel = r.RegisterAction("pickcancel", _ =>
+        {
+            s_pickClosed = s_pickQuest;
+            s_picks.Clear();
+        });
+        _hide = r.RegisterAction("hide", a =>
+        {
+            if (int.TryParse(a.Argument, out int id)) Send(new ToggleMarkers(id) { Tick = Tick });
         });
         _abandon = r.RegisterAction("abandon", a =>
         {
@@ -211,7 +245,7 @@ public sealed class GuildUi : IUiExtension
     {
         if (!RadiantQuestsMod.Settings.MapMarkers || GuildSystem.View is not { } view) yield break;
         var colour = new Vector4(0.95f, 0.30f, 0.20f, 1);
-        foreach (var q in view.Quests)
+        foreach (var q in view.Quests.Where(q => !q.MarkersHidden))
             foreach (var at in q.Targets)
                 yield return new UiMapMarker(at, "Character", colour, q.Text, $"Guild quest\t{q.Text}\nProgress\t{q.Have}/{q.Need}", 0, 1.2f);
     }
@@ -453,14 +487,45 @@ public sealed class GuildUi : IUiExtension
         foreach (var q in view.Quests)
         {
             var row = Row($"rq-q{q.Id}", line, _row);
-            string state = q.Done ? "done, hand it in" : $"{q.Have}/{q.Need}, {Left(q.HoursLeft)}";
+            // Handed in where it was taken (his rule); a courier at its destination.
+            bool here = q.Kind == ItemQuestKinds.Courier || q.Site == s_site;
+            string state = q.Done ? (here ? "done, hand it in" : $"done, hand it in at {q.Town}") : $"{q.Have}/{q.Need}, {Left(q.HoursLeft)}"
+                + (here ? "" : $", taken in {q.Town}");
             row.Children.Add(Label($"rq-qt{q.Id}", $"  {RankBand(q.Rank, q.Band)}  {q.Text}   ·   {state}   ·   {q.Cats} cats, {q.Rep} rep",
-                q.Done ? _title[Math.Max(0, lv - 1)] : _text[lv], line, new UiLength(-250 * s, 1)));
-            row.Children.Add(Button($"rq-qh{q.Id}", "Hand in", _handIn, q.Id.ToString(), q.Done, 120 * s, lv, false, line));
+                q.Done ? _title[Math.Max(0, lv - 1)] : _text[lv], line, new UiLength(-(q.RumourCost > 0 ? 440 : 250) * s, 1)));
+            // A better rumour of where to get the goods, for cats (the clerk's; read again in the journal).
+            if (q.RumourCost > 0)
+                row.Children.Add(Button($"rq-qr{q.Id}", $"Ask more ({q.RumourCost}c)", _rumour, q.Id.ToString(), true, 184 * s, lv, false, line));
+            bool goods = q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find;
+            row.Children.Add(Button($"rq-qh{q.Id}", "Hand in", goods ? _pickOpen : _handIn, q.Id.ToString(), q.Done && here, 120 * s, lv, false, line));
             row.Children.Add(Button($"rq-qx{q.Id}", "Abandon", _abandon, q.Id.ToString(), true, 120 * s, lv, false, line));
             mine.Children.Add(row);
         }
         body.Children.Add(mine);
+
+        // The pick window (his rule, 2026-11-24): choose which goods go; worn ones and ones that don't count say why.
+        if (view.HandIn is { } hv && hv.QuestId == s_pickQuest && s_pickClosed != hv.QuestId && view.Quests.Any(q => q.Id == hv.QuestId))
+        {
+            int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
+            var head = Row("rq-pick-h", line);
+            head.Children.Add(Label("rq-pick-t", $"Hand in: {hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-260 * s, 1)));
+            head.Children.Add(Button("rq-pick-give", "Hand in picked", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
+            head.Children.Add(Button("rq-pick-x", "Close", _pickCancel, "", true, 100 * s, lv, false, line));
+            body.Children.Add(head);
+            var picks = Scroll("rq-pick", Math.Max(line * 2, listH), line);
+            if (hv.Choices.Count == 0) picks.Children.Add(Label("rq-pick-none", "Nothing that fits is carried by your characters at the clerk.", _dim[lv], line));
+            foreach (var c in hv.Choices)
+            {
+                var prow = Row($"rq-pk{c.Key}", line, _row);
+                bool ok = c.Problem.Length == 0, on = ok && s_picks.Contains(c.Key);
+                prow.Children.Add(Button($"rq-pkb{c.Key}", on ? "[x]" : "[ ]", _pickToggle, c.Key.ToString(), ok, 60 * s, lv, on, line));
+                string count = c.Units > 1 ? $"{c.Units} x " : "";
+                prow.Children.Add(Label($"rq-pkt{c.Key}", $"  {count}{c.Name}   ·   {c.Holder}   ·   worth {c.Worth:N0}" + (ok ? "" : $"   ·   {c.Problem}"),
+                    ok ? _text[lv] : _dim[lv], line));
+                picks.Children.Add(prow);
+            }
+            body.Children.Add(picks);
+        }
         return w;
     }
 
@@ -479,16 +544,24 @@ public sealed class GuildUi : IUiExtension
         if (view.Quests.Count == 0) list.Children.Add(Label("rq-j-none", "No quests. Talk to a bartender (right click > Adventurers' Guild).", _dim[lv], line));
         foreach (var q in view.Quests)
         {
-            var box = new UiNode($"rq-j{q.Id}") { Placement = new UiPlacement(UiLength.Fill, line + small + 10), Flow = UiFlow.Column, Style = _row, Padding = 4 };
+            bool rumour = q.Rumour.Length > 0 && !q.Done;
+            var box = new UiNode($"rq-j{q.Id}") { Placement = new UiPlacement(UiLength.Fill, line + small * (rumour ? 2 : 1) + 10), Flow = UiFlow.Column, Style = _row, Padding = 4 };
             string state = q.Done ? "done: hand it in at a guild clerk" : $"{q.Have}/{q.Need}   ·   {Left(q.HoursLeft)}";
             var top = Row($"rq-j{q.Id}a", line);
-            top.Children.Add(Label($"rq-j{q.Id}t", $"  {RankBand(q.Rank, q.Band)}   {q.Text}   ·   {state}", q.Done ? _title[Math.Max(0, lv - 1)] : _text[lv], line, new UiLength(-130 * s, 1)));
+            bool marked = q.Targets.Count > 0 && !q.Done;
+            top.Children.Add(Label($"rq-j{q.Id}t", $"  {RankBand(q.Rank, q.Band)}   {q.Text}   ·   {state}", q.Done ? _title[Math.Max(0, lv - 1)] : _text[lv], line,
+                new UiLength(-(marked ? 256 : 130) * s, 1)));
+            if (marked)
+                top.Children.Add(Button($"rq-j{q.Id}h", q.MarkersHidden ? "Show" : "Hide", _hide, q.Id.ToString(), true, 120 * s, lv, q.MarkersHidden, line));
             top.Children.Add(Button($"rq-j{q.Id}x", "Abandon", _abandon, q.Id.ToString(), true, 120 * s, lv, false, line));
             box.Children.Add(top);
             string who = q.General ? $"Guild work, taken in {q.Town}" : $"For {q.GiverName}, taken in {q.Town}";
             string pay = $"{q.Cats} cats, {q.Rep} rep" + (q.General ? "" : $" + {q.Rep} points" + (q.Relation > 0 ? $", relations +{q.Relation}" : ""));
-            string where = q.Done ? "" : q.Targets.Count > 0 ? "   ·   marked on the map" : "   ·   none found nearby (abandoning is free)";
+            bool items = q.Kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find;
+            string where = q.Done || items ? "" : q.Targets.Count > 0 ? (q.MarkersHidden ? "   ·   markers hidden" : "   ·   marked on the map")
+                : "   ·   none found nearby (abandoning is free)";
             box.Children.Add(Label($"rq-j{q.Id}d", $"      {who}   ·   {pay}{where}", _dim[lv], small));
+            if (rumour) box.Children.Add(Label($"rq-j{q.Id}r", $"      Rumour: {q.Rumour}" + (q.RumourCost > 0 ? "  (a clerk can tell you more)" : ""), _dim[lv], small));
             list.Children.Add(box);
         }
         body.Children.Add(list);

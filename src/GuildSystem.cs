@@ -18,7 +18,16 @@ namespace RadiantQuests;
 public sealed record ClerkInfo(CharacterId Id, int Site, string Faction, string FactionName, string TownName, Vector3 Position);
 
 public sealed record QuestView(int Id, string Text, int Rank, int Have, int Need, double HoursLeft, long Cats, int Rep, bool Done, bool General,
-    string GiverName, IReadOnlyList<Vector2> Targets, string TargetId = "", string Band = "", string Town = "", int Relation = 0);
+    string GiverName, IReadOnlyList<Vector2> Targets, string TargetId = "", string Band = "", string Town = "", int Relation = 0)
+{
+    public string Kind { get; init; } = "";
+    /// <summary>The town (site) where it was taken and is handed in.</summary>
+    public int Site { get; init; } = -1;
+    /// <summary>The clerk's rumour of where to get its item ("" none), and what a better one costs now (0: none to buy).</summary>
+    public string Rumour { get; init; } = "";
+    public long RumourCost { get; init; }
+    public bool MarkersHidden { get; init; }
+}
 
 public sealed record OfferView(int Slot, string Text, int Rank, long Cats, int Rep, bool Taken, bool Locked, int Relation = 0, string Band = "");
 
@@ -30,7 +39,11 @@ public sealed record FactionStanding(int Rank, long Points, long NextRankAt, flo
 /// <summary>What the interface shows, made by the world after a change (never touched by the world again).</summary>
 public sealed record GuildView(long Tick, double Hours, long Lifetime, long Balance, int Rank, long NextRankAt, IReadOnlyList<QuestView> Quests,
     IReadOnlyDictionary<int, BoardView> Boards, IReadOnlyDictionary<CharacterId, ClerkInfo> Clerks,
-    IReadOnlyDictionary<string, FactionStanding> Factions);
+    IReadOnlyDictionary<string, FactionStanding> Factions)
+{
+    /// <summary>The pick window's list (a hand-in of goods being chosen), or null.</summary>
+    public HandInView? HandIn { get; init; }
+}
 
 public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveData, ICharacterDeathObserver, IWorldReady
 {
@@ -96,9 +109,35 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                     case RerollBoard r: Reroll(world, r.Clerk); break;
                     case HandIn h: HandInQuest(world, h); break;
                     case Abandon a: AbandonQuest(world, a.QuestId); break;
+                    case BuyRumour br: BuyBetterRumour(world, br); break;
+                    case ShowHandIn sh: OpenHandIn(world, sh.Clerk, sh.QuestId); break;
+                    case HandInPicked hp: HandInPick(world, hp); break;
+                    case ToggleMarkers tm:
+                        if (_s.Quests.FirstOrDefault(x => x.Id == tm.QuestId) is { } hq) { hq.MarkersHidden = !hq.MarkersHidden; _dirty = true; }
+                        break;
                     case TestKill k: TestCount(world, k.TargetId); break;
                     case TestRep r: GainRep(r.Amount); break;
                     case TestFinish f: TestFinishQuest(world, f.QuestId); break;
+                    case TestOfferCmd to: TestOffer(world, to.Clerk, to.Kind, to.Rank, to.Take, to.Filter); break;
+                    case TestCourier tc:
+                        if (_s.Quests.FirstOrDefault(x => x.Id == tc.QuestId) is { } cr)
+                        {
+                            var pc = Access.FindTagged(world, cr.Tag);
+                            var amb = GroupByKey(world, cr, cr.AmbushKey);
+                            string members = amb is null ? "" : string.Join(" ", Access.Standing(world, amb.Id).Select(m => Access.At(world, m) is { } ma
+                                ? $"{ma.X:0},{ma.Y:0}{(Access.Fighting(world, m) ? "F" : "")}" : "?"));
+                            RadiantQuestsMod.Log($"test courier #{cr.Id}: parcel {(pc is { } pp ? $"at {pp.At.X:0},{pp.At.Y:0} yours {pp.Yours} alive {pp.HolderAlive} ground {pp.OnGround} down {Access.DownOrCarried(world, pp.Holder)} hidden {Access.Hidden(world, pp.Holder)}" : "none")}"
+                                + $"; progress {cr.Progress:0}/{cr.StartDist:0} next roll {cr.NextRoll:0} ambushes {cr.Ambushes} chasing {cr.AmbushSince >= 0} stolen {cr.StolenSince:0.00}"
+                                + $"; group {(amb is null ? "none" : $"{amb.Id} at {amb.At.X:0},{amb.At.Y:0} standing {amb.Standing}/{amb.Size} loaded {Access.Loaded(world, amb.Id)} held {world.Platoons.Find(amb.Id)?.Held} members {members}")}");
+                        }
+                        break;
+                    case TestAmbush ta2:
+                        if (_s.Quests.FirstOrDefault(x => x.Id == ta2.QuestId) is { Kind: ItemQuestKinds.Courier } cq)
+                        {
+                            cq.NextRoll = Math.Min(cq.NextRoll, cq.Progress);
+                            cq.ForceAmbush = true;
+                        }
+                        break;
                     case TestHerd th: TestHerdReport(world, th.QuestId); break;
                     case TestSetAges ta:
                         if (_s.Quests.FirstOrDefault(x => x.Id == ta.QuestId) is { } aq
@@ -125,6 +164,8 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                             if (q.NearSince >= 0) q.NearSince -= k.Hours;
                             if (q.LastContact >= 0) q.LastContact -= k.Hours;
                             q.LastRefill -= k.Hours;
+                            if (q.StolenSince >= 0) q.StolenSince -= k.Hours;
+                            if (q.AmbushSince >= 0) q.AmbushSince = Math.Max(0, q.AmbushSince - k.Hours);
                         }
                         foreach (var key in _s.SpawnDefeats.Keys.ToList()) _s.SpawnDefeats[key] -= k.Hours;
                         _dirty = true;
@@ -306,7 +347,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             GiverFaction = clerk.Faction,
             Site = clerk.Site,
             General = !a.Faction,
-            Deadline = world.GameHours + _set.KillHours,
+            Deadline = offer.Hours < 0 ? double.MaxValue : world.GameHours + (offer.Hours > 0 ? offer.Hours : _set.KillHours),
             AnchorX = clerk.Position.X,
             AnchorZ = clerk.Position.Z,
             Group = offer.Group,
@@ -319,16 +360,25 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             Score = offer.Score,
             Age = offer.Age,
             Strays = offer.Strays,
+            DestSite = offer.DestSite,
+            Carrier = offer.Carrier,
+            MinWorth = offer.MinWorth,
         };
         // Taken or not, the offer is used up: a cleared board stays cleared until it refreshes.
         offer.Taken = true;
         _dirty = true;
         if (!type.Accept(world, this, q, offer, new Vector2(clerk.Position.X, clerk.Position.Z))) return;
         q.FullNeed = q.Need;
+        if (HasRumours(q))
+        {
+            q.Rumour = RumourOf(world, q, 0);
+            RadiantQuestsMod.Detail($"quest #{q.Id} rumour: {q.Rumour}");
+        }
         _s.NextId++;
         _s.Quests.Add(q);
+        _lastTrack = long.MinValue / 2;   // its markers at once, not at the next 5 s look
         RadiantQuestsMod.Toast($"Quest taken{(q.General ? "" : $" for {clerk.FactionName}")}: {q.Describe()} ({Ranks.Name(q.Rank)}). "
-            + $"{_set.KillHours / 24.0:0.#} days.");
+            + (q.Deadline >= double.MaxValue / 2 ? "No time limit." : $"{(q.Deadline - world.GameHours) / 24.0:0.#} days."));
     }
 
     void HandInQuest(World world, HandIn h)
@@ -341,11 +391,19 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             return;
         }
         if (ClerkInReach(world, h.Clerk) is not { } clerk) return;
+        // Handed in where it was taken (his rule, 2026-11-24); a courier's parcel at its destination (its type checks).
+        if (q.Kind != ItemQuestKinds.Courier && clerk.Site != q.Site)
+        {
+            RadiantQuestsMod.Toast($"Hand this one in at {TownName(q.Site)}, where you took it.");
+            return;
+        }
         if (!q.General && clerk.Faction != q.GiverFaction)
         {
             RadiantQuestsMod.Toast("Hand this one in to the faction that gave it.");
             return;
         }
+        // The quest type's part of the hand-in (items, a parcel, the right town): it may refuse, and then nothing is paid.
+        if (QuestTypes.Of(q.Kind) is { } handType && !handType.HandIn(world, this, q, clerk)) return;
         End(world, q);
         // Targets someone else beat are not paid for (bugs and stuck ones are): cats, rep, points and relations by the share you did.
         double share = q.PayShare;
@@ -374,9 +432,11 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         var q = _s.Quests.FirstOrDefault(x => x.Id == id);
         if (q is null) return;
         // Nothing of it can be found now (no target marked, none defeated): not your fault, so giving it up is free.
-        bool nothing = !q.Done && q.Have == 0 && _markers.TryGetValue(q.Id, out var at) && at.Count == 0;
+        // (Fights only: an item quest shows no marker by design, a supply quest's goods can always be bought.)
+        bool nothing = q.Kind is Catalog.Hunt or Catalog.Cull or GroupQuest.KindId or LairQuest.KindId
+            && !q.Done && q.Have == 0 && _markers.TryGetValue(q.Id, out var at) && at.Count == 0;
         End(world, q);
-        int cost = nothing ? 0 : (int)Math.Round(q.Rep * _set.AbandonCost);
+        int cost = nothing ? 0 : (int)Math.Round(q.Rep * _set.AbandonCost * Math.Max(1, q.PenaltyMult));
         RadiantQuestsMod.Toast($"Quest abandoned: {q.Describe()}." + (cost > 0 ? $" -{cost} guild rep" + (q.General ? "." : " and faction points.")
             : nothing ? " None could be found: no penalty." : ""));
         LoseRep(cost);
@@ -406,19 +466,31 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                 continue;
             }
             if (q.Done || world.GameHours <= q.Deadline) continue;
-            End(world, q);
-            int cost = (int)Math.Round(q.Rep * _set.FailCost);
-            int relation = q.General ? 0 : Ranks.FailRelation(q.Rank);
-            Notices.Post($"Quest failed (out of time): {q.Describe()}." + (cost > 0 ? $" -{cost} guild rep" + (q.General ? "." : " and faction points.") : "")
-                + (relation < 0 ? $" Relations {relation}." : ""));
-            LoseRep(cost);
-            if (!q.General)
-            {
-                LosePoints(q.GiverFaction, cost);
-                Access.ChangeRelation(world, _data.FactionIndex(q.GiverFaction), relation, "Guild quest failed");
-            }
+            FailQuest(world, q, "out of time");
         }
     }
+
+    /// <summary>
+    /// A quest failed (out of time, or its type says so: a courier died, a recovered item was sold): the fail cost in rep (times the quest's
+    /// penalty multiplier) and, for a faction's quest, points and relations.
+    /// </summary>
+    void FailQuest(World world, Quest q, string why)
+    {
+        End(world, q);
+        int cost = (int)Math.Round(q.Rep * _set.FailCost * Math.Max(1, q.PenaltyMult));
+        int relation = q.General ? 0 : Ranks.FailRelation(q.Rank);
+        Notices.Post($"Quest failed ({why}): {q.Describe()}." + (cost > 0 ? $" -{cost} guild rep" + (q.General ? "." : " and faction points.") : "")
+            + (relation < 0 ? $" Relations {relation}." : ""));
+        LoseRep(cost);
+        if (!q.General)
+        {
+            LosePoints(q.GiverFaction, cost);
+            Access.ChangeRelation(world, _data.FactionIndex(q.GiverFaction), relation, "Guild quest failed");
+        }
+    }
+
+    /// <summary>Why the quest type failed a quest, set with its Failed result (shown in the notice).</summary>
+    public string FailWhy { get; set; } = "";
 
     /// <summary>Every 5 s: each quest type marks its targets and refills or ends a quest that has nothing left to find.</summary>
     void Track(World world)
@@ -434,6 +506,11 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             {
                 End(world, q);
                 Notices.Post($"Quest called off, no penalty: {q.Describe()}.");
+            }
+            else if (result == TrackResult.Failed)
+            {
+                FailQuest(world, q, FailWhy.Length > 0 ? FailWhy : "it can't be done any more");
+                FailWhy = "";
             }
         }
         _dirty = true;
@@ -633,12 +710,15 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     /// cap a spawn, one whose sizes include it, spawned at exactly that many; else the one whose usual size is nearest. With
     /// <paramref name="most"/>, never more than that (a top-up never brings more than what is missing). Returns the group, null when none.
     /// </summary>
-    public (int Size, ulong Key)? SpawnNear(World world, Quest q, Target t, Survey survey, int most = int.MaxValue, int want = 0)
+    public (int Size, ulong Key)? SpawnNear(World world, Quest q, Target t, Survey survey, int most = int.MaxValue, int want = 0,
+        Vector2? ahead = null, bool? stray = null, IReadOnlyCollection<string>? only = null)
     {
+        bool isStray = stray ?? q.Stray;
         if (want <= 0) want = Math.Max(1, q.Need - q.Have);
         want = Math.Min(want, most);
         bool cap = WorldAccess.CanCap;
-        var templates = q.Stray ? Survey.AnyTemplates(Cat, t) : survey.LocalTemplates(Cat, t);
+        var templates = isStray ? Survey.AnyTemplates(Cat, t) : survey.LocalTemplates(Cat, t);
+        if (only is not null) templates = [.. templates.Where(only.Contains)];
         // Groups set aside after 3 broken spawns in a row are not used (unless the overrides allow them). A group that just came out broken
         // for this quest is tried again first, at a new spot (his idea, 2026-11-23): a bad spot clears on the retry, a truly broken group
         // strikes out on this one quest and is never used again; then another group is used.
@@ -667,8 +747,9 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             string template = choice[dice.Int(0, choice.Count - 1)];
             int faction = Access.SpawnFaction(template);
             if (faction < 0 || faction == _data.PlayerFaction || Array.BinarySearch(_guildFactions, faction) >= 0) continue;
-            var regions = q.Stray ? Cat.WildRegions : Cat.TemplateRegions.GetValueOrDefault(template);
-            if (regions is null || RingSpot(world, survey.At, regions, dice) is not { } spot) continue;
+            var regions = isStray ? Cat.WildRegions : Cat.TemplateRegions.GetValueOrDefault(template);
+            if (regions is null || (ahead is { } dir ? AheadSpot(world, survey.At, dir, regions, dice) : RingSpot(world, survey.At, regions, dice))
+                is not { } spot) continue;
             var (size, key) = Access.Spawn(world, faction, template, q.Site, spot, q.Tag, cap ? want : 0);
             if (size <= 0) continue;
             q.Spawned = true;
@@ -690,7 +771,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
     {
         if (regions.Count == 0) return null;
         float range = _set.TargetRange, limit = Math.Max(range, _set.SpawnLimit);
-        int seen = 0, region = 0, ground = 0, crowded = 0;
+        int seen = 0, region = 0, ground = 0, crowded = 0, town = 0;
         string lastProblem = "";
         // Never on top of another group the mod brought in (his test, 2026-11-24: five quests' spawns landed on one spot and fought each other).
         var others = Access.Groups(world).Where(g => g.ModSpawned && g.Tag.StartsWith("radiantquests:", StringComparison.Ordinal)).Select(g => g.At).ToList();
@@ -703,15 +784,65 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
                 var p = at + new Vector2((float)Math.Cos(a), (float)Math.Sin(a)) * r;
                 if (Access.Region(p) is not { } g || !regions.Contains(g)) { region++; continue; }
                 if (Access.YoursNearPoint(world, p, SightReach)) { seen++; continue; }
+                if (NearSettlement(p)) { town++; continue; }
                 if (others.Any(o => Vector2.Distance(o, p) < SpawnSpacing)) { crowded++; continue; }
                 if (Access.SpotProblem(world, p, at) is { } problem) { ground++; lastProblem = problem; continue; }
                 return p;
             }
         }
-        RadiantQuestsMod.Detail($"no spawn spot near {at.X:0},{at.Y:0}: {region} outside the regions, {seen} in your sight, {crowded} near another "
+        RadiantQuestsMod.Detail($"no spawn spot near {at.X:0},{at.Y:0}: {region} outside the regions, {seen} in your sight, {town} at a town, {crowded} near another "
             + $"brought-in group, {ground} bad ground (last: {lastProblem})");
         return null;
     }
+
+    /// <summary>
+    /// A spot AHEAD of <paramref name="at"/> toward <paramref name="toward"/> (a courier's ambush, his rule 2026-11-24: always out of sight,
+    /// in front so it can cut the courier off): 3500 to 9000 units out, within 50 degrees either side of the way, nearest and straightest
+    /// first (seeded tie order), by the same checks as <see cref="RingSpot"/>. Null when there is none.
+    /// </summary>
+    Vector2? AheadSpot(World world, Vector2 at, Vector2 toward, IReadOnlySet<string> regions, Dice dice)
+    {
+        var way = toward - at;
+        if (regions.Count == 0 || way.LengthSquared() < 1) return null;
+        double heading = Math.Atan2(way.Y, way.X);
+        var others = Access.Groups(world).Where(g => g.ModSpawned && g.Tag.StartsWith("radiantquests:", StringComparison.Ordinal)).Select(g => g.At).ToList();
+        int side = dice.Chance(0.5) ? 1 : -1;
+        for (float r = 3500; r <= 9000; r += 750)
+            for (int i = 0; i <= 10; i++)
+            {
+                // 0, +10, -10, +20, -20 ... +50, -50 degrees (the first side seeded).
+                double off = (i + 1) / 2 * 10 * (i % 2 == 1 ? side : -side) * Math.PI / 180;
+                var p = at + new Vector2((float)Math.Cos(heading + off), (float)Math.Sin(heading + off)) * r;
+                if (Access.Region(p) is not { } g || !regions.Contains(g)) continue;
+                if (Access.YoursNearPoint(world, p, SightReach)) continue;
+                if (NearSettlement(p)) continue;
+                if (others.Any(o => Vector2.Distance(o, p) < SpawnSpacing)) continue;
+                if (Access.SpotProblem(world, p, at) is not null) continue;
+                return p;
+            }
+        RadiantQuestsMod.Detail($"no ambush spot ahead of {at.X:0},{at.Y:0}");
+        return null;
+    }
+
+    /// <summary>
+    /// Whether <paramref name="p"/> is in or right next to a town, village or outpost (his report, 2026-11-24: Crop Louse brought into a
+    /// hive village): within the place's radius plus <see cref="SettlementMargin"/>. Camps and nests are not settlements.
+    /// </summary>
+    bool NearSettlement(Vector2 p)
+    {
+        _settlements ??= [.. Enumerable.Range(0, _data.Sites.Count)
+            .Where(i => _data.Sites[i].Town.Type is Meitou.Data.Gameplay.TownType.Town or Meitou.Data.Gameplay.TownType.Village
+                or Meitou.Data.Gameplay.TownType.Outpost)
+            .Select(i => Access.Site(i)).Where(s => s is not null).Select(s => (s!.At, Math.Max(600f, s.Radius) + SettlementMargin))];
+        foreach (var (at, reach) in _settlements)
+            if (Vector2.DistanceSquared(at, p) <= reach * reach) return true;
+        return false;
+    }
+
+    List<(Vector2 At, float Reach)>? _settlements;
+
+    /// <summary>How far outside a settlement's own radius nothing is brought in (units).</summary>
+    const float SettlementMargin = 1500;
 
     /// <summary>How far your characters see (units): nothing is spawned nearer than this to any of them.</summary>
     const float SightReach = 3000;
@@ -731,16 +862,18 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         _dirty = false;
         _lastPublish = world.Tick;
         int rank = Rank;
-        var quests = _s.Quests.Select(q => new QuestView(q.Id, q.Describe(), q.Rank, q.Have, q.Need,
+        var quests = _s.Quests.Select(q => new QuestView(q.Id, q.DescribeWithBest(), q.Rank, q.Have, q.Need,
             q.Deadline >= double.MaxValue / 2 ? double.PositiveInfinity : q.Deadline - world.GameHours, q.CatsNow, q.RepNow, q.Done, q.General,
             Cat.FactionNames.GetValueOrDefault(q.GiverFaction, q.GiverFaction),
             q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. at] : [], q.TargetId, Difficulty.Band(q.Score, q.Rank), TownName(q.Site),
-            q.General ? 0 : (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * q.PayShare))).ToList();
+            q.General ? 0 : (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * q.PayShare))
+            { Kind = q.Kind, Site = q.Site, Rumour = q.Rumour, RumourCost = HasRumours(q) && q.RumourLevel < MostRumour && !q.Done ? RumourCost(q) : 0, MarkersHidden = q.MarkersHidden }).ToList();
         var boards = new Dictionary<int, BoardView>();
         OfferView View(Offer o, int myRank)
         {
             var (c, r) = _set.ReduceBelowRank ? Ranks.BelowRankPay(myRank - o.Rank) : (1.0, 1.0);
-            return new OfferView(o.Slot, o.Describe(), o.Rank, (long)Math.Round(o.Cats * c * _set.CatsMult),
+            string limit = o.Hours < 0 ? "  (no time limit)" : o.Hours > 0 ? $"  ({o.Hours / 24:0.#} days)" : "";
+            return new OfferView(o.Slot, o.Describe() + limit, o.Rank, (long)Math.Round(o.Cats * c * _set.CatsMult),
                 (int)Math.Round(o.Rep * r * _set.RepMult), o.Taken, o.Rank > myRank, o.Relation, Difficulty.Band(o.Score, o.Rank));
         }
         foreach (var b in _s.Boards)
@@ -756,7 +889,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             standings[f] = new FactionStanding(fr, _s.PointsWith(f), _set.FactionNextAt(fr), Access.Relation(_data.FactionIndex(f), _data.PlayerFaction));
         }
         Volatile.Write(ref s_view, new GuildView(world.Tick, world.GameHours, _s.Lifetime, _s.Balance, rank, _set.NextRankAt(rank), quests, boards,
-            new Dictionary<CharacterId, ClerkInfo>(_clerks), standings));
+            new Dictionary<CharacterId, ClerkInfo>(_clerks), standings) { HandIn = _handInView });
     }
 
     public void Hash(ref StateHasher hasher)

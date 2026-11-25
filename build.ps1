@@ -7,7 +7,7 @@ param(
 )
 $ErrorActionPreference = "Stop"
 $here = Split-Path -Parent $MyInvocation.MyCommand.Path
-$wantVersion = "0.22.2-nightly.20261124"
+$wantVersion = "0.22.2-nightly.20261124.3"
 $modName = "RadiantQuests"
 
 function Say($text, $color = "Gray") { Write-Host $text -ForegroundColor $color }
@@ -70,16 +70,22 @@ Copy-Item $dll.FullName $stage -Force
 Copy-Item (Join-Path $here "meitou.json") $stage -Force
 Copy-Item (Join-Path $here "overrides.json") $stage -Force
 
-function Write-FcsString([System.IO.BinaryWriter]$w, [string]$s) { $b = [System.Text.Encoding]::ASCII.GetBytes($s); $w.Write([int]$b.Length); $w.Write($b) }
-$fs = [System.IO.File]::Create((Join-Path $stage "$modName.mod"))
-$w = New-Object System.IO.BinaryWriter($fs)
-try {
-    $w.Write([int]16); $w.Write([int]1)                      # file type, version
-    Write-FcsString $w "RadiantQuests"                      # author
-    Write-FcsString $w "Radiant Quests for Meitou (code mod): repeatable guild quests, rep and ranks. Holds no records."
-    Write-FcsString $w ""; Write-FcsString $w ""             # dependencies, references
-    $w.Write([int]0); $w.Write([int]0)                       # flags, record count
-} finally { $w.Close() }
+# The Kenshi data file: data\RadiantQuests.mod (the Guild Parcel item, made by test\make-data.ps1); an empty one if it is missing.
+$dataFile = Join-Path $here "data\$modName.mod"
+if (Test-Path $dataFile) { Copy-Item $dataFile (Join-Path $stage "$modName.mod") -Force }
+else {
+    function Write-FcsString([System.IO.BinaryWriter]$w, [string]$s) { $b = [System.Text.Encoding]::ASCII.GetBytes($s); $w.Write([int]$b.Length); $w.Write($b) }
+    $fs = [System.IO.File]::Create((Join-Path $stage "$modName.mod"))
+    $w = New-Object System.IO.BinaryWriter($fs)
+    try {
+        $w.Write([int]16); $w.Write([int]1)                      # file type, version
+        Write-FcsString $w "RadiantQuests"                      # author
+        Write-FcsString $w "Radiant Quests for Meitou (code mod): repeatable guild quests, rep and ranks. Holds no records."
+        Write-FcsString $w ""; Write-FcsString $w ""             # dependencies, references
+        $w.Write([int]0); $w.Write([int]0)                       # flags, record count
+    } finally { $w.Close() }
+    Say "data\$modName.mod missing: installed an empty data file (no courier quests)" Yellow
+}
 Say "Built: $stage" Green
 
 if ($NoInstall) { exit 0 }

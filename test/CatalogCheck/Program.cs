@@ -1,4 +1,4 @@
-// Radiant Quests offline catalog check. GPLv3 or later.
+﻿// Radiant Quests offline catalog check. GPLv3 or later.
 // Usage: CatalogCheck <Kenshi folder> <base|full> [overrides folder]
 // Loads the game data as the game would (the base game alone, or the install's mod list) and prints what the mod would make of it: counts,
 // families, tame animals left out, how many targets reach each rank, sample ranks for known fights, and every note for review.
@@ -53,6 +53,60 @@ foreach (var (label, list, tmpl) in new[] { ("hunts", cat.Hunts, cat.HuntTemplat
     Console.WriteLine("    e.g. no group at all: " + string.Join(", ", noTemplates.Take(25).Select(t => t.Name.Trim())));
 }
 
+Console.WriteLine("== item catalog:");
+var items = ItemCatalog.Build(db, line => Console.WriteLine("  " + line), ov);
+foreach (var rarity in Enum.GetValues<ItemRarity>())
+{
+    var some = items.Items.Values.Where(i => i.Rarity == rarity).ToList();
+    Console.WriteLine($"  {rarity}: {some.Count} | by kind: " + string.Join(", ", some.GroupBy(i => i.Kind).OrderByDescending(g => g.Count()).Select(g => $"{g.Key} {g.Count()}")));
+    Console.WriteLine("    e.g. " + string.Join(", ", some.OrderBy(i => i.Value).Where((_, n) => n % Math.Max(1, some.Count / 12) == 0).Take(12).Select(i => $"{i.Name} ({i.Value}c{(i.ShopTowns > 0 ? $", {i.ShopTowns} towns" : "")})")));
+}
+Console.WriteLine($"== item groups: {items.Groups.Count}");
+foreach (var g in items.Groups.Values.OrderBy(g => g.Key))
+{
+    var m = g.Members.Select(id => items.Items[id]).ToList();
+    int sold = m.Count(i => i.ShopTowns > 0);
+    Console.WriteLine($"  {g.Name}: {m.Count} items ({sold} sold), worth {m.Min(i => i.ValueLo)}..{m.Max(i => i.ValueHi)} | e.g. "
+        + string.Join(", ", m.OrderBy(i => i.ValueHi).Where((_, n) => n % Math.Max(1, m.Count / 4) == 0).Take(4).Select(i => $"{i.Name} {i.ValueLo}-{i.ValueHi}")));
+}
+var parts = items.Items.Values.Where(i => i.AnimalPart).OrderBy(i => i.Value).ToList();
+Console.WriteLine($"== animal parts: {parts.Count}: " + string.Join(", ", parts.Take(30).Select(i => $"{i.Name} {i.Value}c stack {i.Stack}")));
+if (Environment.GetEnvironmentVariable("RQ_GROUP") is { Length: > 0 } grp)
+    foreach (var g in items.Groups.Values.Where(g => g.Key.Contains(grp)).OrderBy(g => g.Key))
+        Console.WriteLine($"grp {g.Key}: " + string.Join(", ", g.Members.Select(m => items.Items[m]).OrderBy(i => i.Name).Select(i => $"{i.Name} {i.ValueLo}-{i.ValueHi}")));
+if (Environment.GetEnvironmentVariable("RQ_WHY") is { Length: > 0 } why)
+{
+    // Where items whose name matches come from: their rarity, and every vendor list holding them with the squads that use the list.
+    var rxw = new System.Text.RegularExpressions.Regex(why, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    var users = new Dictionary<string, List<string>>();
+    foreach (var sq in db.OfType(Meitou.Data.Fcs.FcsRecordType.SquadTemplate))
+        foreach (var l in sq.GetReferences("vendors"))
+        {
+            if (!users.TryGetValue(l.TargetStringId, out var u)) users[l.TargetStringId] = u = [];
+            Meitou.Data.Gameplay.SquadTemplate? st = null; try { st = Meitou.Data.Gameplay.SquadTemplate.From(sq); } catch { }
+            u.Add($"{sq.Name}{(st?.IsTrader == true ? "[T]" : "")}");
+        }
+    foreach (var it in items.Items.Values.Where(i => rxw.IsMatch(i.Name)).Take(15))
+    {
+        var lists = db.OfType(Meitou.Data.Fcs.FcsRecordType.VendorList).Where(v => { try { return Meitou.Data.Gameplay.Economy.VendorList.From(db, v).Entries.Any(e => e.Id == it.Id); } catch { return false; } }).ToList();
+        Console.WriteLine($"why {it.Name} [{it.Id}] price {it.Price} lo {it.ValueLo} hi {it.ValueHi} worn {it.WornBy.Length} group {it.Group}: {it.Rarity}, {it.ShopTowns} towns, value {it.Value} | lists: " + string.Join("; ", lists.Take(8).Select(v => $"{v.Name} <- {string.Join(",", users.GetValueOrDefault(v.StringId, []).Take(4))}")));
+    }
+}
+foreach (var (town, illegal) in items.IllegalAtTown.Take(4))
+    Console.WriteLine($"  illegal in town {db.Find(town)?.Name}: " + string.Join(", ", illegal.Take(8).Select(i => db.Find(i)?.Name ?? i)));
+foreach (var (faction, illegal) in items.IllegalForFaction.Take(6))
+    Console.WriteLine($"  illegal for faction {db.Find(faction)?.Name}: " + string.Join(", ", illegal.Take(8).Select(i => db.Find(i)?.Name ?? i)));
+
+if (Environment.GetEnvironmentVariable("RQ_ITEMS") is { Length: > 0 } itemWords)
+{
+    var rx = new System.Text.RegularExpressions.Regex(itemWords, System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+    foreach (var t in new[] { Meitou.Data.Fcs.FcsRecordType.Item, Meitou.Data.Fcs.FcsRecordType.Container })
+        foreach (var r in db.OfType(t).Where(r => rx.IsMatch(r.Name ?? "")).Take(40))
+            Console.WriteLine($"item {t} '{r.Name}' ({r.StringId}) value {r.GetInt("value")} kg {r.GetFloat("weight kg")} "
+                + $"size {r.GetInt("inventory footprint width", 1)}x{r.GetInt("inventory footprint height", 1)} stack {r.GetInt("stackable", 1)} "
+                + $"function {r.GetInt("item function")} trade {r.GetBool("trade item")}");
+}
+
 if (Environment.GetEnvironmentVariable("RQ_TOWNS") is { Length: > 0 } townNames)
 {
     var factionsAll = Meitou.Data.Gameplay.FactionData.LoadAll(db);
@@ -86,3 +140,7 @@ foreach (var (r, d) in cat.RegionDanger.OrderBy(kv => kv.Value))
 Console.WriteLine($"== {cat.Checks.Count} notes for review:");
 foreach (var note in cat.Checks) Console.WriteLine("  - " + note);
 return 0;
+
+
+
+

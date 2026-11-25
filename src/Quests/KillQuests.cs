@@ -140,7 +140,8 @@ public abstract class CountQuest : IQuestType
             if (guild.SpawnNear(world, q, t, survey, want: planned) is not { } g) break;
             if (g.Size == planned) return true;
             double score = Catalog.Fight(Unit(t), g.Size);
-            if (Difficulty.RankOf(score) > q.Rank && attempt < 2)
+            // Past the rank, or (his report: "Hunt 2 Goat" became 1) smaller than planned: another try first.
+            if ((Difficulty.RankOf(score) > q.Rank || g.Size < planned) && attempt < 2)
             {
                 q.Skipped.Add(g.Key);   // not needed: cleared away once you are not near
                 RadiantQuestsMod.Detail($"quest #{q.Id}: brought-in group of {g.Size} is past rank {Ranks.Name(q.Rank)}, trying another");
@@ -179,7 +180,14 @@ public abstract class CountQuest : IQuestType
     }
 
     public bool Counts(Quest q, PersonFacts person, string race, string familyHead) =>
-        Kind == Catalog.Hunt ? q.TargetId == race : q.TargetId == familyHead;
+        IsLoner(q) ? person.GroupTag == q.Tag
+        : Kind == Catalog.Hunt ? q.TargetId == race : q.TargetId == familyHead;
+
+    /// <summary>
+    /// "Defeat a Dust Bandit Loner": one person alone (his rule, 2026-11-24): only that person counts and is marked, never a member of
+    /// another group of the faction; beaten by someone else first, the quest is called off.
+    /// </summary>
+    public static bool IsLoner(Quest q) => q.Kind == Catalog.Cull && q.Need == 1 && q.GroupSize == 1;
 
     public TrackResult Track(World world, GuildSystem guild, Quest q, List<Vector2> markers)
     {
@@ -195,6 +203,19 @@ public abstract class CountQuest : IQuestType
             .ThenBy(g => Vector2.Distance(g.At, anchor))
             .ThenBy(g => g.Id)
             .ToList();
+        if (IsLoner(q))
+        {
+            if (q.Done) return TrackResult.Going;
+            var loner = groups.FirstOrDefault(g => g.Tag == q.Tag && !q.Skipped.Contains(g.Key));
+            if (loner is { Standing: > 0 })
+            {
+                markers.Add(loner.At);
+                return TrackResult.Going;
+            }
+            if (guild.Fighting(world, q)) return TrackResult.Going;
+            RadiantQuestsMod.Toast($"Someone else got to the {Quest.LonerName(q.TargetName)} before you. Called off, no penalty.");
+            return TrackResult.CallOff;
+        }
         var marked = groups.Where(g => g.Standing > 0 && !q.Skipped.Contains(g.Key)).ToList();
         int standing = marked.Sum(g => g.Standing);
         // The map shows the quest's own group; other groups of the kind (any of them counts) only when its own can't cover what is still
@@ -451,10 +472,19 @@ public sealed class GroupQuest : IQuestType
         }
         // The group is broken (gone, or nobody left standing): done if your side fought it, else called off with no penalty.
         if (q.Done) return TrackResult.Going;
-        if (q.Hit)
+        // Broken with your side in the fight: what YOU defeated counts (his report, 2026-11-24: 1 of 9 beaten by you, the rest by Dust
+        // Bandits, was paid as 9/9). The count drops to yours and the pay with it; none of yours: called off, no penalty.
+        if (q.Hit && q.Have > 0)
         {
-            q.Have = q.Need;
-            RadiantQuestsMod.Toast($"{q.Describe()}: the group is broken. Hand it in at a guild clerk.");
+            if (q.Have < q.Need)
+            {
+                q.Cats = (long)Math.Round(q.Cats * (double)q.Have / q.Need / 10) * 10;
+                q.Rep = (int)Math.Round(q.Rep * (double)q.Have / q.Need);
+                RadiantQuestsMod.Toast($"{q.Describe()}: the group is broken; you defeated {q.Have} of {q.Need}, others the rest. Paid for yours.");
+                q.Need = q.Have;
+                q.FullNeed = q.Have;
+            }
+            else RadiantQuestsMod.Toast($"{q.Describe()}: the group is broken. Hand it in at a guild clerk.");
             return TrackResult.Done;
         }
         RadiantQuestsMod.Toast($"The group for \"{q.Describe()}\" broke up before you fought it: the quest is called off, no penalty.");

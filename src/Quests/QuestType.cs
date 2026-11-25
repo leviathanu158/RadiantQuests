@@ -11,7 +11,7 @@ namespace RadiantQuests;
 public enum Tab { General, Faction }
 
 /// <summary>What a quest type sees while a town's board is made.</summary>
-public sealed class BoardContext(World world, GuildSystem guild, Survey survey, Tab tab, int giver, string giverId, Dice dice)
+public sealed class BoardContext(World world, GuildSystem guild, Survey survey, Tab tab, int giver, string giverId, Dice dice, int site = -1)
 {
     public World World { get; } = world;
     public GuildSystem Guild { get; } = guild;
@@ -22,6 +22,8 @@ public sealed class BoardContext(World world, GuildSystem guild, Survey survey, 
     public int Giver { get; } = giver;
     public string GiverId { get; } = giverId;
     public Dice Dice { get; } = dice;
+    /// <summary>The town (site index) the board is for; -1 unknown.</summary>
+    public int Site { get; } = site;
 }
 
 /// <summary>
@@ -31,7 +33,8 @@ public sealed class BoardContext(World world, GuildSystem guild, Survey survey, 
 public readonly record struct Candidate(Offer Offer, double Weight, bool Present = true);
 
 /// <summary>What a quest type is told about a quest's progress check.</summary>
-public enum TrackResult { Going, Done, CallOff }
+/// <summary>Going on; done (hand it in); called off (no penalty: not your doing); failed (the penalty, as running out of time).</summary>
+public enum TrackResult { Going, Done, CallOff, Failed }
 
 public interface IQuestType
 {
@@ -55,12 +58,22 @@ public interface IQuestType
 
     /// <summary>The quest ended (any way): give back what it holds.</summary>
     void End(World world, GuildSystem guild, Quest q);
+
+    /// <summary>
+    /// Handing a done quest in at <paramref name="clerk"/>: a type that wants something (items, a parcel, a certain town) takes or checks it
+    /// here; false refuses the hand-in (the type tells the player why) and nothing is paid. Default: nothing to hand over.
+    /// </summary>
+    bool HandIn(World world, GuildSystem guild, Quest q, ClerkInfo clerk) => true;
+
+    /// <summary>One of your characters sold an item of <paramref name="record"/> to a trader (item quests check whether it was theirs).</summary>
+    void Sold(World world, GuildSystem guild, Quest q, string record) { }
 }
 
 public static class QuestTypes
 {
     /// <summary>Every quest type, in board order.</summary>
-    public static readonly IQuestType[] All = [new HuntQuest(), new DefeatQuest(), new GroupQuest(), new LairQuest()];
+    public static readonly IQuestType[] All = [new HuntQuest(), new DefeatQuest(), new GroupQuest(), new LairQuest(),
+        new SupplyQuest(), new GearQuest(), new FindQuest(), new CourierQuest(), new RecoverQuest()];
 
     public static IQuestType? Of(string kind) => All.FirstOrDefault(t => t.Kind == kind);
 }

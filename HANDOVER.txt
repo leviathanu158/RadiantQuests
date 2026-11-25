@@ -192,6 +192,184 @@ offers, reroll), counts with a grace margin, reachable spawns, honest markers; t
 ==========================================================================================
 7. NEXT STEPS (in rough order)
 ==========================================================================================
+ITEM FRAMEWORK REDESIGN (2026-11-24, his feedback after the first build; to be built on top of what is below):
+ - ONE "item target" rule: one item OR a group from the data (weapon skill category; armour class + slot; an animal's death items).
+ - Weapons/armour: ask for a TYPE + a MINIMUM WORTH, judged by the game's own price of the handed-in item (Meitou Market.BaseValue:
+   grade + maker included, so modded grades work). Rank and pay come from the REQUIRED worth, never from what is handed in. Count 1
+   (2 for cheap ones). High tiers are not rare, so the required worth sets the rank; B and up get long or NO time limits (his point).
+ - Over-delivering: a small tip (proposed: 10% of the extra worth, at most 25% of the quest's pay) - never profitable, never exploitable.
+ - Supply themes rotate like fight kinds: trade goods, animal parts, weapons by type, armour by class/slot; Find = rare items (score =
+   value x rarity factor, B and up, to be dialled in).
+ - Courier pay = distance + danger. Danger first version: route samples of region danger + hostile camps near the line, a quarter added,
+   up to +1 rank. Dodgeable by taking another road, so the ambush is the real danger: it WAITS near the destination's approach (every
+   route ends there) and attacks only when Kenshi's own sight finds the courier - stealth, speed or a smart route can still slip past
+   (his rule: a stealthy or smart player must have a chance). Pay follows the ambush's strength.
+ - COURIER AMBUSHES v3 (2026-11-24, supersedes the two-thirds rolls below; his issues: a late roll spawns too far to ever meet, slow groups
+   can't chase, one-at-a-time blocks later rolls): roll every 4000 units of PROGRESS toward the destination (remaining distance shrinking),
+   none in the first 3000 from the start town or the last 6000 before the destination; per-roll chance = his table (E 20 .. SS 80%);
+   at most 2 ambushes a run (3 at S/SS); spawned AHEAD of the courier (a cone toward the destination), out of sight, kinds by the kill-quest
+   rules incl. the 15% out-of-region roll; ordered toward the courier to intercept; an ambush stops being "active" once it fights, loses
+   the courier, or is left ~4000 behind -> later rolls still happen. Score = distance + expected ambushes x strength.
+ - AMBUSH THEFT (his rule, 2026-11-24): the courier goes down or is carried off and the last blow on them came from THIS quest's ambush
+   group (combat hit log, GroupTag == quest tag; not random groups) and the group are people (not animals): one of them is given a loot
+   order on the courier (Meitou LootOrder, the real animation), the tagged parcel moves to that member. If the loot can't run (looter
+   down/interrupted), the parcel moves to the nearest standing ambush member anyway. Animals: no theft, the run goes on.
+   WIN IT BACK (his rule): the quest does NOT fail at once: the thieves leave (released toward their home / away from you), the parcel is
+   marked on the map, and you have 1 game hour, as long as the thief stays within ~5000 units of the nearest of yours, to take it back
+   (kill / knock out / pickpocket the carrier, loot it). Taken back: the run goes on, the ambush counts as done. Fails ("the parcel was
+   stolen") when the hour runs out or the parcel gets farther than that.
+ - (older) COURIER AMBUSHES (supersedes "waits near the destination", his call): two rolls, at random points around 1/3 (25-40%) and 2/3
+   (60-75%) of the way; chance per roll E 20, D 30, C 40, B 50, A 60, S 70, SS 80% (his B-SS numbers); strength one rank below the run
+   (two below for S/SS: never SS groups on an SS run); only one ambush at a time; spawned by the kill-quest rules (region kinds, out of
+   sight 3000+, spacing); sometimes behind giving chase, sometimes ahead waiting. Chase: Meitou HoldPlatoon + SendPlatoon toward the
+   courier off screen; loaded, the mod keeps ordering them toward the courier (they must not idle at load range, his worry); a sneaking
+   courier not yet spotted (AggroSystem.Spotted/Unseen) is searched for at the last known place. Escape: courier reaches a town, gets
+   ~5000 ahead, or ~2 game hours pass -> released, cleanup removes them. Pay = distance + EXPECTED danger (chance x strength).
+ - Weapon/armour targets: worth X set so several items of the type at or above X are sold in the region (tune: variety), 15% grace,
+   "about X" shown, and the journal shows the best matching item you carry and its worth.
+ - Recover: the item is placed in a camp / nest / ruin with enemies (natural, or guards brought in if empty), in a storage container if
+   Meitou allows a mod to put items in one, else on the ground at its heart; marked from the start; any approach works (sneak, run, kill).
+ - CONTRABAND / SMUGGLING SHELVED (his call): future "dark guild" (name TBD) with its own NPCs and ranks: smuggling, contraband supply,
+   assassination (neutral NPCs too), kidnapping, thievery. Build the general framework tools first.
+
+ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TESTED, NOT COMMITTED, version not bumped yet):
+ - His decisions: real goods for supply/find; courier uses the mod's own "Guild Parcel" item (data\RadiantQuests.mod, made by
+   test\make-data.ps1 + test\MakeData, look of the base Damaged Book, value 0); courier fails only if the carrier dies or time runs out
+   (taken by others: marked to win back); harder couriers (C+) get an ambush near mid-route; stolen goods count unless stolen from the
+   faction you hand in to; recover item marked from the start; recover item picked up then abandoned OR SOLD = harsh penalty (x3);
+   "enough on the map" ruleset for very rare items still TBD; NO economy (out of scope); pay like all other quests (rank pay by score).
+ - Files: src\Items\ItemCatalog.cs (kinds, value, rarity common/uncommon/rare/unobtainable from shops/loot/placements/people, towns
+   selling, contraband per town/faction, noitem/allowitem overrides), WorldAccess Items region (Carried, TakeCarried, Give, FindTagged,
+   RemoveTagged, NearestYours, GroupHolder; Area.Items), src\GuildSystem.Items.cs (ITradeObserver sale watch, SitesSelling,
+   FriendlyTowns, TownFacts, SpawnAmbush), src\Quests\ItemQuests.cs (SupplyQuest, FindQuest, CourierQuest, RecoverQuest), IQuestType
+   HandIn/Sold hooks, TrackResult.Failed + GuildSystem.FailQuest/FailWhy, Quest.PenaltyMult/DestSite/Carrier/ItemHeld/ItemPlaced/SaleSeen,
+   BoardContext.Site, setting ItemQuests. build.ps1 installs data\RadiantQuests.mod. Offline: CatalogCheck prints the item catalog
+   (base: 417 usable; full list: 8945, 5381 "unobtainable" are mostly craftable modded armour variants - crafting not read yet).
+ - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
+   "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
+
+STATE 0.9.3 (2026-11-24, from his feedback file "Problems identified for Radiant Quests.txt" (13 points) and his answers; installed):
+ - HIS DECISIONS: hand-in = PICK WINDOW; item pay = REAL PRICE x 1.3-1.6 (rank from that); rank rep = TWO THIRDS (D 500, C 1500, B 3330,
+   A 6000, S 10000, SS 16650; his saved settings keep old values until reset); gear quests = FROM LOCAL LOOT, C and up; ambush strength =
+   two difficulty bands below the run (Hard C -> at most Easy C; Very Easy C -> at most Hard D); couriers at EVERY rank; ambushers make
+   sense (people or predators hostile to you, never grazers); hand in where taken (couriers at the destination); rumours must name only
+   usable places; the best rumour's place is marked; markers stay an optional setting (next: rumours for most quests, Wasteland
+   Remembers as a starting point).
+ - FIXES: (13) a wiped-out group beaten mostly by others paid 9/9 for 1 defeat: now pays your share (Need = yours, cats/rep scaled);
+   (3) loner quests count and mark only the loner's own group, called off if someone else gets him; (5) a brought-in group smaller than
+   planned is retried (goats 2 -> 1); (6) nothing is brought in within a town/village/outpost's radius + 1500 (NearSettlement, RingSpot
+   and AheadSpot); (2) worn gear is never taken (listed "worn: take it off first"; the game's unequip keeps the model right).
+ - NEW: pick window (GuildSystem.HandIn.cs, ShowHandIn/HandInPicked, WorldAccess.Offer/TakePicked, clerk window list with [x] toggles,
+   reasons: worn / stolen from this faction / worth too little); ItemFacts.Price (ItemValue with category rows x mean trader "buy mult";
+   sleeping bag 605 = his shop price) and WornBy (squads whose people wear/carry it); Difficulty.ScoreForCats; FindQuest pay = price x
+   (1.3-1.6 + up to 0.5 scarcity); supply count sized from price; gear only if 3+ group items drop locally (worn by local squads or held
+   in camps within 50000) at a looted grade (lowest third); ItemQuestKinds.AmbushCap/CourierReach; SpawnAmbush(cap) filters templates
+   hostile to you (SpawnNear "only"); rumours: shops only in usable towns (town/village, owner not hostile), animal parts name the
+   beasts and the regions they live in, gear names who wears it, level 2 sets Quest.HasHint/HintX/HintZ (marked); QuestView.Site; clerk
+   rows say "hand in at X" elsewhere; debug key F10 (Debug setting on): rep to SS; test channel: pick <q>, picks, give <q> <keys...>.
+ - MEITOU UPDATE (seen 2026-11-24): his install now has 0.22.2-nightly.20261124.3 (commit 806fb73d). build.ps1 $wantVersion set to it;
+   C:\KenshiRef\MeitouClient checked out at 806fb73 (no change in the APIs the mod uses since 1514e93). Test scripts must read the log of
+   the NEWEST version folder. Tested on it: offers (E supply 4 Raw Meat 560c, E/D couriers, C/B gear medium shirt, C find Skeleton
+   Muscle 2750c, B find Ancient Science Book 7030c), pick window hand-in (11 Riceweed, 410c); pick lines now group alike items.
+ - BOOTS FOLLOW-UP (his reply): the stolen rule is per exact faction (it was already: a Shek clerk refuses only "Stolen From Shek Kingdom");
+   his Kral's Chosen boots failed because they are not "light boots": in his whole list the only light boots are Drifter's Boots (boots:
+   cloth Wooden Sandals; light Drifter's Boots; medium Plated Longboots; heavy Samurai/Ancient Samurai Boots, Crab Shoes). HIS RULE: a
+   gear kind with few items is asked for only when extremely abundant: GearQuest needs 3+ items of the kind that drop locally, OR local
+   groups wearing them >= 8 (Abundant). The gear rumour says "Counts: X, Y" when the kind has 4 items or fewer. Test tool: CatalogCheck
+   RQ_GROUP=<part of a group key> lists a group's members.
+ - NOT DONE: (7) stolen boots: the rule already refuses only goods stolen from the hand-in faction (Squin's clerk is Shek: boots stolen
+   from Shek don't count, by his own rule); the pick window now says why an item doesn't count. (12) courier testing at high ranks: use F10.
+
+STATE 0.9.2 (2026-11-24, his "go wild" test session; installed; NOT committed):
+ - TESTED OK (rqtest, Manual Combat off for runs): gear/supply hand-ins (empty/short refused, grace, tip 160c), courier chase + theft +
+   get-away fail, recover (marker, pickup, hand-in 24000c, abandon after pickup x3 = -458), full scenario 23/25 (the 2 fails were the test
+   picking an item quest for "finish": fixed to pick a faction FIGHT; re-run not done), stress: 29 quests at once, rumours + hidden flag +
+   held ambush survive quicksave/quickload, reroll x5, skip 300h fails all with costs, no mod errors.
+ - FIXED: shop markers left on supply/gear (removed: rumours only); ambush "left behind" now vs the courier's CURRENT distance; far ambushers
+   are ordered to MOVE to the courier (attack order alone left them idle 3500 away), attack within 1200; a forced test roll pushes the
+   next roll; markers appear right after accept (track at once); recover marks the camp if its item is missing; offers show
+   "(10 days)" / "(no time limit)"; TestSkip also winds StolenSince/AmbushSince.
+ - NOT VERIFIED: winning a stolen parcel back by looting (agent loot on a body failed while Su was KO; he tests by hand); hidden
+   (sneaking) courier search; courier death fail; delivery at the destination clerk (walk there; test teleports stop short of reach).
+ - Watch: a C courier's ambush came as 14 Dark Reavers (rank D group) - check the ambush sizes/strength.
+ - Test tools: test\manual-combat.ps1 -Off/-On (removes/restores ManualCombat.mod in Kenshi data\mods.cfg; quick.ps1 -NoManualCombat,
+   scenario.ps1 off by default (-WithManualCombat to keep), restored once the world is up or on the next run); test channel: take <kind>
+   <rank> [name filter], courier <q>, ambush <q>, rumour <q>, hide <q>; quests shows rumour/[hidden].
+ - NEXT SESSION (his plan): bug fixes from his own test feedback, then RUMOURS FOR MOST QUESTS (Discord feedback: rumours for most, markers
+   only where needed: courier, recover/retrieval, later smuggling); look at the mod "Wasteland Remembers" rumour system as a starting point
+   (study, don't copy). MARKERS STAY AS AN OPTIONAL SETTING (for players who want them, and for his testing).
+
+STATE 0.9.1 (2026-11-24, his decisions after the 0.9.0 tests; installed; mod-check PASS; small in-game test PASS on rqtest):
+ - MAP HELP: no markers for where to get goods (his call: Kenshi gives little help; the dotted-ring area idea was dropped). Instead CLERK
+   RUMOURS (src\GuildSystem.Rumours.cs) for supply, gear and find quests, from the data: level 0 free at accept ("Some shops sell them,
+   not far from here." / "Said to turn up in camps and outposts, far from here." / beasts for animal parts), level 1 for ~10% of the
+   pay (+ compass way, map north = -Z, and region name), level 2 for ~25% (shop towns / the nearest place by name). Kept in
+   Quest.Rumour/RumourLevel and shown under the quest in the journal (his rule: re-readable). Bought at a clerk: "Ask more (Xc)" on your
+   quest row (BuyRumour). Test: "rumour <quest>". Tested: 210c then 520c on a C find, then "told you all they know".
+ - FIND = HARD TO GET, not "never sold" (his point): Rare or Uncommon (sold in 1-3 towns or by traders only), availability = loot
+   places + 2 x shop places on the map >= 2 (ItemCatalog.FoundAtTowns: non-trading squads' loot/storage lists and members' items, by
+   the towns they live in; GuildSystem.PlacesHolding/PlacesSelling/SitesHolding), score = value x clamp(24/availability, 3, 12), C and up.
+ - BOARD MIX (his rule: variety, nothing locked; MostItems cap removed): item work is never "present"; with real fights around each slot
+   rolls fight vs item (RealFightWeight 2:1); a slot passing its bring-in roll rolls 50/50; a slot failing it becomes item work at
+   ItemFallback 0.5, else stays empty. Constants for now (could become settings). Tested board: E 3 fights + 2 items, D 2 fights, C 6+2,
+   faction C 1 fight + 4 items (no real enemies there).
+ - Journal: Hide/Show markers per quest (ToggleMarkers, Quest.MarkersHidden); the MapMarkers setting still hides all. UI: HE CHECKS.
+ - "(your best: X)" only in the windows (Quest.DescribeWithBest), not in toasts.
+
+STATE 0.9.0 (2026-11-24, ITEM FRAMEWORK v2 per the REDESIGN above; built + installed; mod-check: see below; in-game tests: one small test
+per type first (his rule 2026-11-24: small isolated tests, the full batch at the very end)):
+ - ItemCatalog: item GROUPS from the data (ItemGroup, Groups, MembersOf): weapons by "skill category" (katana, sabre, blunt weapon, heavy
+   weapon, hacker, polearm), armour by "class" (cloth/light/medium/heavy) + "slot" (hat, body armour, leg armour, shirt, boots, gloves).
+   ItemFacts gains Group, ValueLo/ValueHi (ItemValue.Of at quality 0 and 100) and DroppedBy (animal races whose "death items" give it;
+   AnimalPart). Base game: 25 groups, 20 animal parts (incl. robot parts from skeletons); full list: 26 groups, 103 parts. Names with "_"
+   or the word "reference" now count as leftovers (Haircut22_attachment, REFERENCE were in the groups).
+ - WorldAccess: WorthOf(item) = the game's own price (ItemValue at GearLevel, a weapon's maker included, as Market.BaseValue);
+   ItemNeed(records, minWorth, tag, refuseStolenFrom); Carried/CarriedAnywhere/BestCarried/TakeCarried(need) (takes the LEAST worth first
+   so a better item you carry is kept; returns the worths); PlaceItem (ground, first walkable spot near a point); Ambush orders region
+   (Area.Orders): Hold/SendAfter/SendTo (PopulationSystem.HoldPlatoon/SendPlatoon in the mod's name "radiantquests": saved, released by
+   Meitou if the mod is gone), Standing, Fighting, At, Hidden (sneaking AND AggroSystem.Unseen), DownOrCarried, OrderAttack
+   (World.GiveOrder FocusedMeleeAttack), OrderMove (MoveCusOrdered), OrderLoot (LootTarget), MoveTagged.
+ - Quest types (src\Quests\ItemQuests.cs): SUPPLY (themes: trade goods 65% / animal parts 35%; loose items at most 12), GEAR (new kind
+   "gear": group + MinWorth, worth = pay x 0.6-0.9, 2 items under 1000 cats, offered only when 3+ group items worth that much at best
+   grade are sold within 50000 of the clerk (or rare/found at B+); 15% grace; "Bring a katana worth about 2,400 cats (your best: X)";
+   tip 10% of the extra, max 25% of pay; marks shops selling good enough ones), FIND (B and up, rare items, score = value x 10),
+   COURIER (v3 ambushes, theft + win-back, score = distance score + expected ambushes x half a middling ambush-rank fight),
+   RECOVER (redone: item on the ground at a hostile camp/nest of the quest's rank near the town (Cat.Lairs + LairQuest.Allowed), marked
+   from the start, re-placed if it vanished before you ever held it; harsh penalty after pickup). Time limits: gear/find B,A 240 h,
+   S,SS none (Offer.Hours; 0 = usual, <0 = none; Deadline = MaxValue).
+ - Courier ambush details: Quest.StartDist/Progress/NextRoll/Ambushes/AmbushKey/AmbushSince/AmbushOrdered/SeenX,Z/StolenSince.
+   SpawnAmbush(at, toward, rank): people (Cat.Culls + GeneralCull) local, or from anywhere on the Stray chance; spawned by SpawnNear's new
+   "ahead" option (GuildSystem.AheadSpot: 3500-9000 out, within 50 degrees of the way, out of sight, spacing, good ground). Chase: held
+   + SendAfter off screen (re-sent every 10 s); loaded, members ordered to attack every 5 s, or to walk to the last seen place when the
+   courier is Hidden. Stops (hold released): beaten, 4000 behind, 2 game hours, courier in a town (InTown), fighting near the courier, or
+   reached the last seen place with the courier still hidden. Theft: courier down or carried with a standing member of the quest's last
+   ambush within 600 -> parcel moved to that member + loot order; win back within 1 game hour while one of yours is within 5000.
+   SIMPLIFICATION vs the plan: "who downed the courier" is judged by the ambush member standing over them, not the hit log.
+ - Board: item kinds are one FAMILY sharing ~1/3 of Pick's turns (ItemShare), so five item kinds don't crowd out fights.
+ - Test channel: "offer <kind> <rank>" (one offer of a kind on the open clerk's General board; log "test offer [slot]"), "ambush <quest>"
+   (the courier's next roll now and always hits). CatalogCheck prints groups and animal parts.
+ - TESTED IN GAME (rqtest, small tests): mod-check PASS; "offer" made gear/supply/find/courier at the ranks asked (recover: no D camp
+   near Squin); board flood found (Squin E row 4/4 item work: items counted as Present) -> MostItems 2 per rank per tab (verified: E row 2
+   items + 4 fights). Courier: forced ambush spawned 2 Hill Marauders ~3500 ahead, out of sight; held + loaded, they closed in, fought,
+   chase stopped ("fighting"); agent "ko" on the courier -> "stole the parcel", parcel moved to a member, marker follows it. A roll now
+   waits while the courier is in a town (first test spawned one at Squin and it stopped at once). Test channel: "take <kind> <rank>"
+   (offer + accept), "courier <quest>" (logs parcel, courier, ambush members, chase state).
+ - HIS QUESTIONS PENDING (2026-11-24): (1) drop the B gate on Find and let worth x 10 set the rank? (2) replace the MostItems cap with his
+   idea: a slot that passes its bring-in roll then rolls its quest type (proposed: two steps, fight vs item share as a setting, then the
+   type; item quests no longer count as Present). Not tested yet: win-back success/fail, hidden-courier search, recover, gear hand-in/tip.
+ - DESIGN TALK 2026-11-24 (after the tests; NOT BUILT): (a) items sold anywhere (books too: Ancient Science Book is in 387 towns' shops
+   with his mods) -> supply-style quests, pay by shop price, buying or looting both fine; never-sold items -> Find, only when several
+   data sources have it (obtainable), rank from worth x scarcity (how few sources), lowest C, count 1; only recover-style quests place
+   items (exact count, cleaned up). (b) Board: each slot rolls fight vs item work (fights weigh more when real fights are near; weights
+   as settings); a failed bring-in roll gets its own roll to become item work, else the slot stays empty; no caps. (c) Map help: only
+   the quest's own places marked by default; a setting "Item quest help: none / hints / markers" (he likes it). (d) His idea: a big
+   WoW-style AREA circle on the map for "somewhere around here", exact place shown only once near. Meitou's map API (UiMapMarker,
+   AddMapMarkers) has no shapes, but a marker can use its own PNG image: a DOTTED RING of small markers at world points on a circle
+   follows the map's zoom and pan correctly (a single big ring image would not scale with the zoom: marker sizes are in screen pixels).
+   The circle's middle is offset at random (seeded) so the target is not at its centre.
+ - Open: guards for an empty camp (Recover) not done (only standing camps are offered); container placement not done (ground only);
+   crafting-aware rarity; very rare items' "enough on the map" rule; tune Find factor, gear worth share, ShopReach.
+
 FULL SCENARIO on 0.8.16 with his FULL mod list (rqtest): ALL PASS (26 checks; knockout skipped as Manual Combat is ticked; the General tab had
 no wipe-out that day, the faction check took a C wipe-out instead). mod-check PASS on rqtest. Test fixes: pick-save ranks by score, saves
 within a quarter of the best are equal and named saves beat autosaves (it had picked an autosave, then the vanilla save); scenario's

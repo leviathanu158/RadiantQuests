@@ -5,6 +5,7 @@
 using System.Numerics;
 using Meitou.Data.Fcs;
 using Meitou.Data.Gameplay;
+using Meitou.Data.Gameplay.Economy;
 using Meitou.Simulation;
 using Meitou.Simulation.Population;
 
@@ -34,7 +35,7 @@ public readonly record struct CampPerson(ulong Id, bool Standing, float FromCamp
 public sealed class WorldAccess(PopulationData data, PopulationSystem? population)
 {
     /// <summary>The areas, each switched off on its first failure.</summary>
-    public enum Area { Groups, Spawning, People, Regions, Relations, Ground }
+    public enum Area { Groups, Spawning, People, Regions, Relations, Ground, Items, Orders }
 
     static readonly HashSet<Area> s_off = [];
 
@@ -461,6 +462,284 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
 
     #endregion
 
+    #region Items
+
+    // The item layer (his framework, 2026-11-24): every item quest counts, takes, gives and finds items through these, never by reading
+    // inventories itself. Items a quest hands out (a parcel, a recover quest's item) carry the quest's tag as their ModTag: saved with the item,
+    // copied with it, never stacked with untagged ones, and ignored by the game if the mod is removed (the item stays an ordinary item).
+
+    /// <summary>Your characters (player characters, alive) within <paramref name="reach"/> of <paramref name="at"/>, by slot.</summary>
+    List<(int Slot, CharacterId Id)> YoursWithin(World world, Vector2 at, float reach)
+    {
+        var table = world.Characters;
+        var list = new List<(int, CharacterId)>();
+        for (int s = 0; s < table.Next.Length; s++)
+            if (table.Next[s].Alive && table.Cold(s) is { IsPlayer: true }
+                && Vector2.Distance(new Vector2(table.Next[s].Position.X, table.Next[s].Position.Z), at) <= reach)
+                list.Add((s, table.IdOf(s)));
+        return list;
+    }
+
+    /// <summary>Whether <paramref name="item"/> counts for a hand-in: the record and tag, and not stolen from <paramref name="refuseStolenFrom"/>.</summary>
+    static bool Counts(Meitou.Simulation.Items.ItemInstance item, string record, string tag, int refuseStolenFrom) =>
+        item.Record == record && item.ModTag == tag && (refuseStolenFrom < 0 || item.StolenFrom != refuseStolenFrom);
+
+    /// <summary>
+    /// How many units of <paramref name="record"/> (with tag <paramref name="tag"/>, "" for ordinary ones) your characters within
+    /// <paramref name="reach"/> of <paramref name="at"/> carry, bags included; units stolen from <paramref name="refuseStolenFrom"/> (a faction
+    /// index; -1 none) don't count (that faction knows them as its own; goods stolen from anyone else are fine, his rule 2026-11-24).
+    /// </summary>
+    public int Carried(World world, Vector2 at, float reach, string record, string tag = "", int refuseStolenFrom = -1) => Guard(Area.Items, 0, () =>
+    {
+        int n = 0;
+        foreach (var (s, _) in YoursWithin(world, at, reach))
+            if (world.Characters.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All())
+                    if (Counts(item, record, tag, refuseStolenFrom)) n += Math.Max(1, item.Quantity);
+        return n;
+    });
+
+    /// <summary>
+    /// How many units of <paramref name="record"/> (with <paramref name="tag"/>) all your characters carry, wherever they are (a quest's
+    /// progress); the same stolen rule.
+    /// </summary>
+    public int CarriedAnywhere(World world, string record, string tag = "", int refuseStolenFrom = -1) =>
+        Carried(world, Vector2.Zero, float.MaxValue, record, tag, refuseStolenFrom);
+
+    /// <summary>
+    /// Takes <paramref name="count"/> units of <paramref name="record"/> (with <paramref name="tag"/>) from your characters within
+    /// <paramref name="reach"/> of <paramref name="at"/> (a hand-in), never more; nothing at all unless all of them are there. True when taken.
+    /// </summary>
+    public bool TakeCarried(World world, Vector2 at, float reach, string record, int count, string tag = "", int refuseStolenFrom = -1) =>
+        Guard(Area.Items, false, () =>
+    {
+        if (Carried(world, at, reach, record, tag, refuseStolenFrom) < count) return false;
+        int left = count;
+        foreach (var (s, _) in YoursWithin(world, at, reach))
+        {
+            if (world.Characters.Cold(s)?.Inventory is not { } inv) continue;
+            foreach (var item in inv.All().Where(i => Counts(i, record, tag, refuseStolenFrom)).ToList())
+                while (left > 0 && inv.RemoveOne(item)) left--;
+            if (left == 0) break;
+        }
+        return left == 0;
+    });
+
+    /// <summary>
+    /// Gives <paramref name="quantity"/> of <paramref name="record"/> to <paramref name="to"/>, tagged <paramref name="tag"/>: into the inventory,
+    /// and what does not fit on the ground at the character's feet (never lost). False when the record or the character is not there.
+    /// </summary>
+    public bool Give(World world, CharacterId to, string record, int quantity, string tag = "") => Guard(Area.Items, false, () =>
+    {
+        var table = world.Characters;
+        if (!table.TryResolveNext(to, out int s) || table.Cold(s)?.Inventory is not { } inv) return false;
+        if (data.Items.Create(record, Math.Max(1, quantity)) is not { } item) return false;
+        item.ModTag = tag;
+        if (!inv.Add(item)) world.GroundItems.Drop(item, table.Next[s].Position, 0);
+        return true;
+    });
+
+    /// <summary>
+    /// Lays one <paramref name="record"/> tagged <paramref name="tag"/> on the ground at or near <paramref name="at"/> (the first walkable spot on
+    /// small rings out from it: a camp's middle may be a building). False when the record is not there.
+    /// </summary>
+    public bool PlaceItem(World world, string record, Vector2 at, string tag) => Guard(Area.Items, false, () =>
+    {
+        if (data.Items.Create(record, 1) is not { } item) return false;
+        item.ModTag = tag;
+        var w = world.Walkability;
+        var spot = at;
+        for (float r = 0; r <= 400; r += 50)
+        {
+            bool found = false;
+            for (int i = 0; i < 8 && !found; i++)
+            {
+                var p = at + new Vector2(MathF.Cos(i * MathF.PI / 4), MathF.Sin(i * MathF.PI / 4)) * r;
+                if (w.IsWalkable(p.X, p.Y)) { spot = p; found = true; }
+            }
+            if (found) break;
+        }
+        world.GroundItems.Drop(item, new Vector3(spot.X, w.TerrainHeight(spot.X, spot.Y) + 2, spot.Y), 0);
+        return true;
+    });
+
+    /// <summary>One of your characters within <paramref name="reach"/> of <paramref name="at"/> (the nearest), or none.</summary>
+    public CharacterId NearestYours(World world, Vector2 at, float reach) => Guard(Area.Items, CharacterId.None, () =>
+    {
+        var table = world.Characters;
+        return YoursWithin(world, at, reach)
+            .OrderBy(y => Vector2.Distance(new Vector2(table.Next[y.Slot].Position.X, table.Next[y.Slot].Position.Z), at))
+            .Select(y => y.Id).DefaultIfEmpty(CharacterId.None).First();
+    });
+
+    /// <summary>Who in group <paramref name="platoonId"/> carries a quest's item: its leader if standing, else its first standing member.</summary>
+    public CharacterId GroupHolder(World world, int platoonId) => Guard(Area.Items, CharacterId.None, () =>
+    {
+        if (world.Platoons.Find(platoonId) is not { } p || p.SquadId < 0 || world.Squads.Find(p.SquadId) is not { } squad) return CharacterId.None;
+        if (Person(world, squad.Leader) is { Down: false, Taken: false }) return squad.Leader;
+        return squad.Members.FirstOrDefault(m => Person(world, m) is { Down: false, Taken: false });
+    });
+
+    /// <summary>Where an item tagged for a quest is now: who holds it (none on the ground), where, whether that is one of yours and alive.</summary>
+    public readonly record struct TaggedItem(CharacterId Holder, Vector2 At, bool Yours, bool HolderAlive, bool OnGround);
+
+    /// <summary>
+    /// Finds the item tagged <paramref name="tag"/>: on your characters first, then on anyone in the world, then on the ground. Null when it is
+    /// nowhere (destroyed, or on someone not in the world now).
+    /// </summary>
+    public TaggedItem? FindTagged(World world, string tag) => Guard<TaggedItem?>(Area.Items, null, () =>
+    {
+        var table = world.Characters;
+        TaggedItem? other = null;
+        for (int s = 0; s < table.Next.Length; s++)
+        {
+            if (table.Cold(s) is not { Inventory: { } inv } cold || !inv.All().Any(i => i.ModTag == tag)) continue;
+            var at = new Vector2(table.Next[s].Position.X, table.Next[s].Position.Z);
+            bool yours = cold.IsPlayer || (data.PlayerFaction >= 0 && cold.Faction == data.PlayerFaction);
+            var found = new TaggedItem(table.IdOf(s), at, yours, table.Next[s].Alive, false);
+            if (yours) return found;
+            other ??= found;
+        }
+        if (other is not null) return other;
+        foreach (var g in world.GroundItems.All)
+            if (g.Item.ModTag == tag) return new TaggedItem(CharacterId.None, new Vector2(g.Position.X, g.Position.Z), false, false, true);
+        return null;
+    });
+
+    /// <summary>Removes every item tagged <paramref name="tag"/> from everyone in the world and the ground (a quest's items when it ends).</summary>
+    public int RemoveTagged(World world, string tag) => Guard(Area.Items, 0, () =>
+    {
+        var table = world.Characters;
+        int n = 0;
+        for (int s = 0; s < table.Next.Length; s++)
+            if (table.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All().Where(i => i.ModTag == tag).ToList())
+                    if (inv.Remove(item)) n++;
+        foreach (var g in world.GroundItems.All.Where(g => g.Item.ModTag == tag).ToList())
+            if (world.GroundItems.Take(g.Id) is not null) n++;
+        return n;
+    });
+
+    // Targets judged by worth (his rule, 2026-11-24: "a katana worth at least X", judged by the game's own price for the item: its grade and,
+    // for a weapon, its maker). The same price the game shows in an item's tooltip (Market.BaseValue: ItemValue at the item's gear level).
+
+    PriceConstants? _prices;
+
+    /// <summary>What the game says an item is worth (one of it): its record at its gear level, a weapon's maker included. 0 if unknown.</summary>
+    public int WorthOf(Meitou.Simulation.Items.ItemInstance item) => Guard(Area.Items, 0, () =>
+    {
+        if (data.Db.Find(item.Record) is not { } record) return 0;
+        _prices ??= PriceConstants.FromDatabase(data.Db);
+        var maker = item.CompanyId.Length > 0 && data.Db.Find(item.CompanyId) is { Type: FcsRecordType.WeaponManufacturer } m ? m : null;
+        return ItemValue.Of(data.Db, record, item.GearLevel, true, _prices, maker);
+    });
+
+    /// <summary>
+    /// What counts for a hand-in: one of <paramref name="Records"/>, worth at least <paramref name="MinWorth"/> (0: any), tagged
+    /// <paramref name="Tag"/> ("" ordinary), and not stolen from <paramref name="RefuseStolenFrom"/> (a faction index, -1 none).
+    /// </summary>
+    public sealed record ItemNeed(IReadOnlySet<string> Records, int MinWorth = 0, string Tag = "", int RefuseStolenFrom = -1);
+
+    bool Fits(Meitou.Simulation.Items.ItemInstance item, ItemNeed need) =>
+        need.Records.Contains(item.Record) && item.ModTag == need.Tag && (need.RefuseStolenFrom < 0 || item.StolenFrom != need.RefuseStolenFrom)
+        && (need.MinWorth <= 0 || WorthOf(item) >= need.MinWorth);
+
+    /// <summary>How many units that fit <paramref name="need"/> your characters within <paramref name="reach"/> of <paramref name="at"/> carry.</summary>
+    public int Carried(World world, Vector2 at, float reach, ItemNeed need) => Guard(Area.Items, 0, () =>
+    {
+        int n = 0;
+        foreach (var (s, _) in YoursWithin(world, at, reach))
+            if (world.Characters.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All())
+                    if (Fits(item, need)) n += Math.Max(1, item.Quantity);
+        return n;
+    });
+
+    /// <summary>The same, wherever your characters are.</summary>
+    public int CarriedAnywhere(World world, ItemNeed need) => Carried(world, Vector2.Zero, float.MaxValue, need);
+
+    /// <summary>
+    /// The worth of the best item of <paramref name="records"/> your characters carry (worth ignored in the match), 0 for none: the journal's
+    /// "your best: X" for a worth target.
+    /// </summary>
+    public int BestCarried(World world, ItemNeed need) => Guard(Area.Items, 0, () =>
+    {
+        int best = 0;
+        var any = need with { MinWorth = 0 };
+        foreach (var (s, _) in YoursWithin(world, Vector2.Zero, float.MaxValue))
+            if (world.Characters.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All())
+                    if (Fits(item, any)) best = Math.Max(best, WorthOf(item));
+        return best;
+    });
+
+    /// <summary>
+    /// Takes <paramref name="count"/> units that fit <paramref name="need"/> from your characters within <paramref name="reach"/> of
+    /// <paramref name="at"/>, the least worth first (so a better one you carry is kept), all or nothing. Returns the worth of each unit taken
+    /// (empty when nothing was taken).
+    /// </summary>
+    public List<int> TakeCarried(World world, Vector2 at, float reach, ItemNeed need, int count) => Guard(Area.Items, new List<int>(), () =>
+    {
+        var worths = new List<int>();
+        var found = new List<(Meitou.Simulation.Items.Inventory Inv, Meitou.Simulation.Items.ItemInstance Item, int Worth)>();
+        foreach (var (s, _) in YoursWithin(world, at, reach))
+            if (world.Characters.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All().Where(i => Fits(i, need) && !Worn(inv, i)).ToList())
+                    found.Add((inv, item, WorthOf(item)));
+        if (found.Sum(f => Math.Max(1, f.Item.Quantity)) < count) return worths;
+        foreach (var (inv, item, worth) in found.OrderBy(f => f.Worth))
+            while (worths.Count < count && inv.RemoveOne(item)) worths.Add(worth);
+        return worths;
+    });
+
+    /// <summary>
+    /// Items one of yours carries that a hand-in could take, alike ones together (the same item, holder, worth and marks: one line of the pick
+    /// window): who has them, the items, their worth (one), units in all, worn, stolen mark.
+    /// </summary>
+    public sealed record Offered(CharacterId Who, IReadOnlyList<Meitou.Simulation.Items.ItemInstance> Items, string Name, string Holder, int Worth,
+        int Units, bool Worn, int StolenFrom);
+
+    /// <summary>Every item of <paramref name="records"/> (untagged) your characters within <paramref name="reach"/> of <paramref name="at"/> carry, bags included, alike ones together.</summary>
+    public List<Offered> Offer(World world, Vector2 at, float reach, IReadOnlySet<string> records) => Guard(Area.Items, new List<Offered>(), () =>
+    {
+        var list = new List<Offered>();
+        foreach (var (s, id) in YoursWithin(world, at, reach))
+            if (world.Characters.Cold(s) is { Inventory: { } inv } cold)
+                foreach (var g in inv.All().Where(i => records.Contains(i.Record) && i.ModTag.Length == 0)
+                    .GroupBy(i => (i.Record, Worth: WorthOf(i), Worn: Worn(inv, i), i.StolenFrom)))
+                    list.Add(new Offered(id, [.. g], data.Db.Find(g.Key.Record)?.Name?.Trim() ?? g.Key.Record, cold.Name, g.Key.Worth,
+                        g.Sum(i => Math.Max(1, i.Quantity)), g.Key.Worn, g.Key.StolenFrom));
+        return list;
+    });
+
+
+    /// <summary>Whether <paramref name="item"/> is worn (in one of <paramref name="inv"/>'s equipment slots, the backpack itself aside).</summary>
+    static bool Worn(Meitou.Simulation.Items.Inventory inv, Meitou.Simulation.Items.ItemInstance item) =>
+        inv.Items.Contains(item) && item.Section != "backpack_attach" && Meitou.Simulation.Items.InventoryCommands.IsEquipmentSection(item.Section);
+
+    /// <summary>
+    /// Takes <paramref name="count"/> units from the picked items, in the order picked (never a worn one), all or nothing. Returns the worth
+    /// of each unit taken (empty when not all could be).
+    /// </summary>
+    public List<int> TakePicked(World world, IReadOnlyList<Offered> picked, int count) => Guard(Area.Items, new List<int>(), () =>
+    {
+        var worths = new List<int>();
+        var live = new List<(Meitou.Simulation.Items.Inventory Inv, Meitou.Simulation.Items.ItemInstance Item, int Worth)>();
+        foreach (var o in picked)
+            if (world.Characters.TryResolveNext(o.Who, out int s) && world.Characters.Cold(s)?.Inventory is { } inv)
+            {
+                var all = inv.All().ToHashSet();
+                foreach (var item in o.Items)
+                    if (all.Contains(item) && !Worn(inv, item)) live.Add((inv, item, o.Worth));
+            }
+        if (live.Sum(l => Math.Max(1, l.Item.Quantity)) < count) return worths;
+        foreach (var (inv, item, worth) in live)
+            while (worths.Count < count && inv.RemoveOne(item)) worths.Add(worth);
+        return worths;
+    });
+
+    #endregion
+
     #region Regions, relations, money
 
     /// <summary>The region (BIOME_GROUP id) at a point, or null.</summary>
@@ -480,6 +759,100 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
     });
 
     public void Pay(World world, long cats) => world.Player.Money += cats;
+
+    #endregion
+
+    #region Ambush orders
+
+    // A courier's ambush (his rules, 2026-11-24): the group is held in the mod's name (saved with its goal; released by Meitou if the mod is
+    // gone), its stand-in follows the courier off screen, and once loaded its members are ordered to run to the courier and attack, or to
+    // search the last place they knew of a sneaking courier they cannot see. Serial phases only (the guild's Schedule).
+
+    const string ModId = "radiantquests";
+
+    Meitou.Simulation.Aggro.AggroSystem? _aggro;
+
+    /// <summary>Takes or gives back the mod's hold on a group. True when done.</summary>
+    public bool Hold(World world, int platoonId, bool held) => Guard(Area.Orders, false, () =>
+        PopulationSystem.HoldPlatoon(world, platoonId, ModId, held));
+
+    /// <summary>Sends a held group's stand-in after <paramref name="c"/> (off screen; Meitou follows the character's last position).</summary>
+    public bool SendAfter(World world, int platoonId, CharacterId c) => Guard(Area.Orders, false, () =>
+        PopulationSystem.SendPlatoon(world, platoonId, ModId, c));
+
+    /// <summary>Sends a held group's stand-in to a point (off screen).</summary>
+    public bool SendTo(World world, int platoonId, Vector2 point) => Guard(Area.Orders, false, () =>
+        PopulationSystem.SendPlatoon(world, platoonId, ModId, point));
+
+    /// <summary>The standing members of a group (not down, not carried), none when it is not loaded.</summary>
+    public List<CharacterId> Standing(World world, int platoonId) => Guard(Area.Orders, new List<CharacterId>(), () =>
+    {
+        var list = new List<CharacterId>();
+        if (world.Platoons.Find(platoonId) is not { SquadId: >= 0 } p || world.Squads.Find(p.SquadId) is not { } squad) return list;
+        foreach (var m in squad.Members)
+            if (world.Characters.TryResolveNext(m, out int s) && world.Characters.Next[s].Alive && world.Characters.Cold(s) is { } cold
+                && cold.Medical is not { Incapacitated: true } && cold.CarriedBy == CharacterId.None)
+                list.Add(m);
+        return list;
+    });
+
+    /// <summary>Whether <paramref name="c"/> is fighting now.</summary>
+    public bool Fighting(World world, CharacterId c) =>
+        world.Characters.TryResolveNext(c, out int s) && world.Characters.Cold(s) is { InCombat: true };
+
+    /// <summary>Where <paramref name="c"/> stands (ground X, Z), or null.</summary>
+    public Vector2? At(World world, CharacterId c) =>
+        world.Characters.TryResolveNext(c, out int s) ? new Vector2(world.Characters.Next[s].Position.X, world.Characters.Next[s].Position.Z) : null;
+
+    /// <summary>
+    /// Whether <paramref name="c"/> is sneaking and no one has spotted them (the game's own stealth: no looker's spot meter on them), so an
+    /// ambush has lost sight of them.
+    /// </summary>
+    public bool Hidden(World world, CharacterId c) => Guard(Area.Orders, false, () =>
+    {
+        if (!world.Characters.TryResolveNext(c, out int s) || world.Characters.Cold(s) is not { } cold) return false;
+        if ((cold.Orders & Meitou.Simulation.Player.CharacterOrders.Sneak) == 0) return false;
+        _aggro ??= world.Systems.OfType<Meitou.Simulation.Aggro.AggroSystem>().FirstOrDefault();
+        return _aggro?.Unseen(world.Characters, c) ?? false;
+    });
+
+    /// <summary>Whether <paramref name="c"/> is down (knocked out, dying, dead) or being carried off.</summary>
+    public bool DownOrCarried(World world, CharacterId c) =>
+        world.Characters.TryResolveNext(c, out int s) && world.Characters.Cold(s) is { } cold
+        && (cold.Medical is { Incapacitated: true } || !world.Characters.Next[s].Alive || cold.CarriedBy != CharacterId.None);
+
+    /// <summary>Orders <paramref name="who"/> to attack <paramref name="target"/> (the game's own attack order); returns Meitou's answer.</summary>
+    public string OrderAttack(World world, CharacterId who, CharacterId target) => Guard(Area.Orders, "off", () =>
+        world.GiveOrder(who, Meitou.Data.Gameplay.Ai.TaskType.FocusedMeleeAttack, target).ToString());
+
+    /// <summary>Orders <paramref name="who"/> to walk to a point (closing in, or a search); returns Meitou's answer.</summary>
+    public string OrderMove(World world, CharacterId who, Vector2 point) => Guard(Area.Orders, "off", () =>
+    {
+        float y = world.Characters.TryResolveNext(who, out int s) ? world.Characters.Next[s].Position.Y : 0;
+        return world.GiveOrder(who, Meitou.Data.Gameplay.Ai.TaskType.MoveCusOrdered, point: new Vector3(point.X, y, point.Y)).ToString();
+    });
+
+    /// <summary>Orders <paramref name="who"/> to loot <paramref name="target"/> (the game's own loot: the animation).</summary>
+    public void OrderLoot(World world, CharacterId who, CharacterId target) => Guard(Area.Orders, 0, () =>
+    {
+        world.GiveOrder(who, Meitou.Data.Gameplay.Ai.TaskType.LootTarget, target);
+        return 0;
+    });
+
+    /// <summary>Moves every item tagged <paramref name="tag"/> into <paramref name="to"/>'s inventory (the ground if it does not fit).</summary>
+    public bool MoveTagged(World world, string tag, CharacterId to) => Guard(Area.Items, false, () =>
+    {
+        var table = world.Characters;
+        if (!table.TryResolveNext(to, out int dest) || table.Cold(dest)?.Inventory is not { } into) return false;
+        var moved = new List<Meitou.Simulation.Items.ItemInstance>();
+        for (int s = 0; s < table.Next.Length; s++)
+            if (s != dest && table.Cold(s)?.Inventory is { } inv)
+                foreach (var item in inv.All().Where(i => i.ModTag == tag).ToList())
+                    if (inv.Remove(item)) moved.Add(item);
+        foreach (var item in moved)
+            if (!into.Add(item)) world.GroundItems.Drop(item, table.Next[dest].Position, 0);
+        return moved.Count > 0;
+    });
 
     #endregion
 }

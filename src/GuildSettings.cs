@@ -37,24 +37,24 @@ public sealed class GuildSettings
     public bool MapMarkers { get; set; } = true;
 
     [Setting("Rep for rank D", Min = 5, Max = 2000, Step = 5, SubGroup = "Ranks",
-        // (His defaults, 2026-11-24: ~15 quests of a rank for D and C; higher work is rarer, so ~11-14 quests of the rank below for B to SS.)
-        Hint = "Lifetime rep needed for rank D (you start at E; about 15 E quests). Each later rank needs about 11 to 15 quests of the rank below. Spending rep at the store never lowers your rank.")]
-    public int RankD { get; set; } = 750;
+        // (His defaults: 2026-11-24 two thirds of the earlier ones, his call after play: ~10 quests of a rank for D and C, ~7-10 of the rank below later.)
+        Hint = "Lifetime rep needed for rank D (you start at E; about 10 E quests). Each later rank needs about 7 to 10 quests of the rank below. Spending rep at the store never lowers your rank.")]
+    public int RankD { get; set; } = 500;
 
     [Setting("Rep for rank C", Min = 10, Max = 5000, Step = 10, SubGroup = "Ranks")]
-    public int RankC { get; set; } = 2250;
+    public int RankC { get; set; } = 1500;
 
     [Setting("Rep for rank B", Min = 20, Max = 10000, Step = 10, SubGroup = "Ranks")]
-    public int RankB { get; set; } = 5000;
+    public int RankB { get; set; } = 3330;
 
     [Setting("Rep for rank A", Min = 30, Max = 20000, Step = 10, SubGroup = "Ranks")]
-    public int RankA { get; set; } = 9000;
+    public int RankA { get; set; } = 6000;
 
     [Setting("Rep for rank S", Min = 40, Max = 50000, Step = 10, SubGroup = "Ranks")]
-    public int RankS { get; set; } = 15000;
+    public int RankS { get; set; } = 10000;
 
     [Setting("Rep for rank SS", Min = 50, Max = 100000, Step = 50, SubGroup = "Ranks")]
-    public int RankSS { get; set; } = 25000;
+    public int RankSS { get; set; } = 16650;
 
     [Setting("Faction work from guild rank", Min = 0, Max = 6, Step = 1, SubGroup = "Ranks",
         Hint = "A faction gives you its own work (its tab at the clerk) once your guild rank reaches this: 0 E, 1 D, 2 C (default), 3 B... "
@@ -140,6 +140,9 @@ public sealed class GuildSettings
         Hint = "A quest against a faction that isn't hostile to you yet (it will be) pays this much more cats: 0.5 is +50%.")]
     public double WarBonus { get; set; } = 0.5;
 
+    [Setting("Item quests", Hint = "Supply, find, courier and recover quests (the item framework). Off: only the fighting quests.")]
+    public bool ItemQuests { get; set; } = true;
+
     [Setting("Quest tracker", Hint = "A small list of your guild quests on screen. Drag its :: grip to move it, its corner to resize it; A- / A+ change the text size.")]
     public bool Tracker { get; set; } = true;
 
@@ -152,7 +155,7 @@ public sealed class GuildSettings
     /// <summary>The settings the world reads, copied in a serial step (one value per tick on every machine).</summary>
     public SettingsCopy Copy() => new(RankD, RankC, RankB, RankA, RankS, RankSS, CatsMult, RepMult, KillHours, KillRefreshHours, FailCost, AbandonCost, TargetRange, Hunts, Culls, SpawnTargets, FactionQuests,
         GroupQuests, WarBonus, SpawnLimit, RefreshDays, RerollCost, ReduceBelowRank, LairQuests, MostPerRank, StrayChance, StragglerHours, DangerShare, StuckHours, DefeatedHours,
-        Math.Clamp(FactionFromRank, 0, 6), FactionRankScale, FactionGuildRep);
+        Math.Clamp(FactionFromRank, 0, 6), FactionRankScale, FactionGuildRep, ItemQuests);
 }
 
 /// <summary>The settings as the world saw them this tick.</summary>
@@ -161,7 +164,7 @@ public sealed record SettingsCopy(int RankD, int RankC, int RankB, int RankA, in
     bool SpawnTargets, bool FactionQuests, bool GroupQuests, double WarBonus, int SpawnLimit,
     int RefreshDays, int RerollCost, bool ReduceBelowRank, bool LairQuests, int MostPerRank = 7, double StrayChance = 0.15,
     double StragglerHours = 2, double DangerShare = 0.25, double StuckHours = 1, double DefeatedHours = 3.5, int FactionFromRank = 2,
-    double FactionRankScale = 0.5, double FactionGuildRep = 0.5)
+    double FactionRankScale = 0.5, double FactionGuildRep = 0.5, bool ItemQuests = true)
 {
     public static SettingsCopy Defaults { get; } = new GuildSettings().Copy();
 

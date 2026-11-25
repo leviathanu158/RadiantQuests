@@ -146,6 +146,37 @@ internal static class TestChannel
                 if (p.Length < 2 || !double.TryParse(p[1], NumberStyles.Float, CultureInfo.InvariantCulture, out double hours)) return "skip <hours>";
                 Send(new TestSkip(hours) { Tick = tick });
                 return "sent";
+            case "offer":
+            case "take":
+                // offer <kind> <rank 0-6>: one offer of that kind on the open clerk's board (see the log for its slot).
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                if (p.Length < 3) return "offer <kind> <rank>";
+                Send(new TestOfferCmd(clerks[s_openIndex].Id, p[1], Arg(2), p[0] == "take", string.Join(" ", p.Skip(3))) { Tick = tick });
+                return "sent (see log: test offer)";
+            case "courier":
+                Send(new TestCourier(Arg(1)) { Tick = tick });
+                return "sent (see log: test courier)";
+            case "rumour":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new BuyRumour(clerks[s_openIndex].Id, Arg(1)) { Tick = tick });
+                return "sent";
+            case "pick":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new ShowHandIn(clerks[s_openIndex].Id, Arg(1)) { Tick = tick });
+                return "sent (then: picks)";
+            case "picks":
+                return view?.HandIn is { } hv ? $"#{hv.QuestId} need {hv.Need}: " + string.Join(" | ", hv.Choices.Select(c =>
+                    $"[{c.Key}] {c.Units}x {c.Name} ({c.Holder}) worth {c.Worth}{(c.Problem.Length > 0 ? " - " + c.Problem : "")}")) : "no pick list";
+            case "give":
+                if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
+                Send(new HandInPicked(clerks[s_openIndex].Id, Arg(1), [.. p.Skip(2).Select(k => int.TryParse(k, out int v) ? v : -1)]) { Tick = tick });
+                return "sent";
+            case "hide":
+                Send(new ToggleMarkers(Arg(1)) { Tick = tick });
+                return "sent";
+            case "ambush":
+                Send(new TestAmbush(Arg(1)) { Tick = tick });
+                return "sent";
             case "finish":
                 Send(new TestFinish(Arg(1)) { Tick = tick });
                 return "sent";
@@ -162,7 +193,7 @@ internal static class TestChannel
             case "quests":
                 if (view is null) return "no view yet";
                 return view.Quests.Count == 0 ? "no quests" : string.Join(" | ", view.Quests.Select(q =>
-                    string.Create(CultureInfo.InvariantCulture, $"#{q.Id} {q.Text} {q.Have}/{q.Need} {(q.Done ? "DONE" : $"{q.HoursLeft:0.0}h")}")));
+                    string.Create(CultureInfo.InvariantCulture, $"#{q.Id} {q.Text} {q.Have}/{q.Need} {(q.Done ? "DONE" : $"{q.HoursLeft:0.0}h")}{(q.Rumour.Length > 0 ? $" [rumour: {q.Rumour}]" : "")}{(q.MarkersHidden ? " [hidden]" : "")}")));
             case "member":
                 // A CHARACTER record of a kill target's squads (one without spaces in its id, for the agent channel's spawn-at), or of a quest's target.
                 if (p.Length < 2) return "member <target id or #quest id>";

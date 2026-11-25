@@ -73,6 +73,24 @@ public static class Difficulty
         return Ranks.Rep(r) * (0.85 + 0.3 * Within(score, r));
     }
 
+    /// <summary>
+    /// The score whose pay is <paramref name="cats"/> (the inverse of <see cref="CatsAt"/>): item quests are ranked by what their goods are
+    /// worth (his rule, 2026-11-24). A value between two ranks' ranges takes the lower rank's top; below E's, E's bottom.
+    /// </summary>
+    public static double ScoreForCats(double cats)
+    {
+        for (int r = 0; r <= Ranks.Top; r++)
+        {
+            var (lo, hi) = Ranks.Cats(r);
+            if (cats > hi && r < Ranks.Top && cats >= Ranks.Cats(r + 1).Min) continue;
+            double w = Math.Clamp((cats - lo) / Math.Max(1.0, hi - lo), 0, 0.999);
+            double blo = r == 0 ? Lines[0] / 8 : Lines[r - 1];
+            double bhi = r < Lines.Length ? Lines[r] : Lines[^1] * 4;
+            return Math.Exp(Math.Log(blo) + w * (Math.Log(bhi) - Math.Log(blo)));
+        }
+        return Lines[^1] * 4 * 0.999;
+    }
+
     /// <summary>The board's pay for an offer: by its difficulty, with a small random spread that never leaves the rank's own range.</summary>
     public static (long Cats, int Rep) Pay(double score, int rank, double spreadA, double spreadB)
     {

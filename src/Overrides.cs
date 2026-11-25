@@ -12,6 +12,8 @@
 //   "strength": { "<faction or race id>": 1.5 }      multiplies that target's fighting strength (so its rank) by this
 //   "nospawn":  ["<id>", ...],          never brought in by a quest: a squad template, or a faction / animal race (all its groups)
 //   "allowspawn": ["<id>", ...],        always allowed to be brought in: skips the broken-spawn checks for that template, faction or race
+//   "noitem":   ["<item id>", ...],     never used by item quests or rewards
+//   "allowitem": ["<item id>", ...],    always usable by item quests, whatever the item checks say (a nameless or worthless-looking item)
 // }
 using System.Text.Json;
 using System.Text.Json.Serialization;
@@ -28,6 +30,8 @@ public sealed class Overrides
     public Dictionary<string, double> Strength { get; set; } = [];
     public List<string> NoSpawn { get; set; } = [];
     public List<string> AllowSpawn { get; set; } = [];
+    public List<string> NoItem { get; set; } = [];
+    public List<string> AllowItem { get; set; } = [];
 
     public sealed class GuildChange
     {
@@ -38,7 +42,7 @@ public sealed class Overrides
     public static Overrides None { get; } = new();
 
     /// <summary>All the ids the files name (for counting the ones the load order lacks).</summary>
-    public IEnumerable<string> AllIds => Block.Concat(Tame).Concat(Wild).Concat(Outlaw).Concat(Guild.Add).Concat(Guild.Remove).Concat(Strength.Keys).Concat(NoSpawn).Concat(AllowSpawn);
+    public IEnumerable<string> AllIds => Block.Concat(Tame).Concat(Wild).Concat(Outlaw).Concat(Guild.Add).Concat(Guild.Remove).Concat(Strength.Keys).Concat(NoSpawn).Concat(AllowSpawn).Concat(NoItem).Concat(AllowItem);
 
     public bool Blocked(string id) => _block.Contains(id);
 
@@ -49,6 +53,14 @@ public sealed class Overrides
     public bool AlwaysSpawn(string id) => _allowSpawn.Contains(id);
 
     HashSet<string> _noSpawn = new(StringComparer.Ordinal), _allowSpawn = new(StringComparer.Ordinal);
+
+    /// <summary>Never used by item quests.</summary>
+    public bool ItemNever(string id) => _noItem.Contains(id);
+
+    /// <summary>Always usable by item quests.</summary>
+    public bool ItemAllowed(string id) => _allowItem.Contains(id);
+
+    HashSet<string> _noItem = new(StringComparer.Ordinal), _allowItem = new(StringComparer.Ordinal);
 
     HashSet<string> _block = new(StringComparer.Ordinal);
 
@@ -84,6 +96,8 @@ public sealed class Overrides
                 foreach (var (id, m) in o.Strength ?? []) if (double.IsFinite(m) && m > 0) all.Strength[id] = m;
                 all.NoSpawn.AddRange(o.NoSpawn ?? []);
                 all.AllowSpawn.AddRange(o.AllowSpawn ?? []);
+                all.NoItem.AddRange(o.NoItem ?? []);
+                all.AllowItem.AddRange(o.AllowItem ?? []);
             }
             catch (Exception e)
             {
@@ -93,6 +107,8 @@ public sealed class Overrides
         all._block = new HashSet<string>(all.Block, StringComparer.Ordinal);
         all._noSpawn = new HashSet<string>(all.NoSpawn, StringComparer.Ordinal);
         all._allowSpawn = new HashSet<string>(all.AllowSpawn, StringComparer.Ordinal);
+        all._noItem = new HashSet<string>(all.NoItem, StringComparer.Ordinal);
+        all._allowItem = new HashSet<string>(all.AllowItem, StringComparer.Ordinal);
         if (files.Count > 0) log($"overrides: {files.Count} file(s), {all.AllIds.Count()} entries");
         return all;
     }
