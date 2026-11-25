@@ -250,7 +250,7 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
 
 STATE 0.11.0 (2026-11-25, PROGRESSION part 1, his decisions; the rep store is next session): GuildSystem.Progression.cs. ENTRY: a newcomer
 (GuildState.Member false) can't take work until the entry trial (an easy E Hunt/Defeat brought in, the easiest candidate) is handed in.
-RANK TRIALS: Rank = min(Promoted, rank by rep); rep reaching the next rank posts "take the rank trial"; the trial is the hardest Hunt/
+RANK TRIALS: Rank = min(Promoted, rank by rep); rep reaching the next rank posts "take the rank trial"; the trial is (0.11.1, his call) the Medium-nearest Hunt/
 Defeat candidate of the new rank (Offer/Quest.Trial 1 entry, 2 rank; "Entry trial: "/"Rank trial: " prefix); fail/abandon costs nothing
 (TrialEnded); hand-in promotes (TrialDone) and queues the rank's reward (GuildState.RewardsDue). REWARDS (his rule: items at every rank,
 a wide selection): RewardChoices = every weapon kind, every armour class+slot (the group's best-known member: most shop towns, then best

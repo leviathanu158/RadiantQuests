@@ -1,7 +1,7 @@
 // Radiant Quests for Meitou. GPLv3 or later.
 // Progression (his design, 2026-11-25):
 //   - ENTRY: a newcomer gets one entry trial (an easy E fight brought in); finish it and you are a member: the boards open.
-//   - RANK TRIALS: the rep for the next rank no longer promotes by itself: the clerk offers a trial, a Hard fight of the new rank
+//   - RANK TRIALS: the rep for the next rank no longer promotes by itself: the clerk offers a trial, a Medium fight of the new rank
 //     (brought in). Win it and you are promoted. Failing or giving a trial up costs nothing; take a new one later.
 //   - REWARDS: each promotion gives a reward you pick at a clerk, from a wide list so anyone finds value: a weapon of any kind, armour of
 //     any class and slot, a backpack, medical supplies, or a purse of cats; gear comes at a grade fitting the new rank.
@@ -80,8 +80,9 @@ public sealed partial class GuildSystem
             RadiantQuestsMod.Toast("The clerk has no trial for you here today. Try another town's clerk.");
             return;
         }
-        // Entry: the easiest; rank trial: the hardest (a Hard fight of the new rank).
-        var pick = due.Kind == 1 ? picks.OrderBy(c => c.Offer.Score).First() : picks.OrderByDescending(c => c.Offer.Score).First();
+        // Entry: the easiest; rank trial: the one nearest Medium for the new rank (his call, 2026-11-25: the hardest was too far on the hard side).
+        var pick = due.Kind == 1 ? picks.OrderBy(c => c.Offer.Score).First()
+            : picks.OrderBy(c => Math.Abs(Difficulty.Within(c.Offer.Score, due.Rank) - 0.5)).ThenBy(c => c.Offer.Score).First();
         var board = BoardFor(world, clerk);
         var o = Clone(pick.Offer);
         o.Trial = due.Kind;

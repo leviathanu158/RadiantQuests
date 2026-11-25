@@ -956,7 +956,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         {
             HandIn = _handInView,
             Member = _s.Member || !RadiantQuestsMod.Settings.Trials,
-            TrialDue = TrialDue() is { } due ? due.Kind == 1 ? "Entry trial: an easy fight to join the guild." : $"Rank trial for rank {Ranks.Name(due.Rank)}: a hard fight." : "",
+            TrialDue = TrialDue() is { } due ? due.Kind == 1 ? "Entry trial: an easy fight to join the guild." : $"Rank trial for rank {Ranks.Name(due.Rank)}: a fair fight of that rank." : "",
             RewardsDue = [.. _s.RewardsDue],
             RewardChoices = _s.RewardsDue.Count > 0 ? (_rewardChoices ??= RewardChoices()) : [],
         });
