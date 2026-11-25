@@ -248,6 +248,13 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.1 (2026-11-25, his wording rules): fight rumours are up to date and told FROM WHERE THEY ARE ASKED ("here" = the clerk, or the
+townsperson): "The Dust Bandits were last seen roaming north-east of here, a short walk out." (+ region at level 1, + nearest named place
+at level 2; under 1500 units "right around here"). Distance words (his "better words"): just outside town (<6000), a short walk out
+(<15000), a good walk off (<35000), a long trek away (<80000), far out in the wastes. No day stamp in the text; the log keeps "Day N:".
+Fight quests can buy fresh rumours again and again after the best level (10% of the pay each): lose them, buy a new one; townsfolk free.
+Tested on "Hand in Bug": first rumour, -30c, -70c, -30c again, townsfolk answer.
+
 STATE 0.10.0 (2026-11-25, FIGHT-QUEST RUMOURS, his decisions): GuildSystem.Rumours: IsFight (hunt, cull, group; a camp to clear keeps its
 marker); FightRumour levels 0 (free/townsfolk) "Day N: Carrion Crawler were seen close to Squin.", 1 (+ way and region), 2 (+ nearest
 named place, never the quest's own town), from where the targets are NOW when told; FightNews each look: first rumour once targets are

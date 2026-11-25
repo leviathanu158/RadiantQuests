@@ -382,7 +382,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         q.FullNeed = q.Need;
         if (HasRumours(q) && !IsFight(q))
         {
-            Heard(q, RumourOf(world, q, 0));
+            Heard(q, RumourOf(world, q, 0), Day(world));
             RadiantQuestsMod.Detail($"quest #{q.Id} rumour: {q.Rumour}");
         }
         _s.NextId++;
@@ -892,7 +892,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
             Cat.FactionNames.GetValueOrDefault(q.GiverFaction, q.GiverFaction),
             q.Done ? [] : _markers.TryGetValue(q.Id, out var at) ? [.. Shown(world, q, at)] : [], q.TargetId, Difficulty.Band(q.Score, q.Rank), TownName(q.Site),
             q.General ? 0 : (int)Math.Floor((q.Relation >= 0 ? q.Relation : Ranks.Relation(q.Rank, 0)) * q.PayShare))
-            { Kind = q.Kind, Site = q.Site, Rumour = q.Rumour, RumourCost = HasRumours(q) && q.RumourLevel < MostRumour && !q.Done ? RumourCost(q) : 0, MarkersHidden = q.MarkersHidden }).ToList();
+            { Kind = q.Kind, Site = q.Site, Rumour = q.Rumour, RumourCost = HasRumours(q) && (q.RumourLevel < MostRumour || IsFight(q)) && !q.Done ? RumourCost(q) : 0, MarkersHidden = q.MarkersHidden }).ToList();
         var boards = new Dictionary<int, BoardView>();
         OfferView View(Offer o, int myRank)
         {
