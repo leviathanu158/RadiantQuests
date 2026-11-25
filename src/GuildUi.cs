@@ -30,7 +30,7 @@ public sealed class GuildUi : IUiExtension
 
     static readonly List<(string Text, long Until)> s_toasts = [];
 
-    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "";
+    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "", _cellHit = "";
 
     /// <summary>The pick window's ticked lines (keys), for the quest it was opened for; a quest id whose window was closed here.</summary>
     static readonly HashSet<int> s_picks = [];
@@ -54,6 +54,7 @@ public sealed class GuildUi : IUiExtension
             Text = new(0.1f, 0.08f, 0.02f, 1) });
         _cellBad = r.RegisterStyle("cell-bad", new UiStyle { Background = new(0.85f, 0.2f, 0.15f, 0.28f), Hover = new(0.85f, 0.2f, 0.15f, 0.42f) });
         _cellMark = r.RegisterStyle("cell-mark", new UiStyle { Text = new(0.1f, 0.08f, 0.02f, 1) });
+        _cellHit = r.RegisterStyle("cell-hit", new UiStyle { Background = new(0, 0, 0, 0), Hover = new(1, 0.85f, 0.3f, 0.12f) });
         for (int i = 0; i < WindowLayout.Fonts.Length; i++)
         {
             string font = WindowLayout.Fonts[i], bigger = WindowLayout.Fonts[Math.Min(i + 1, WindowLayout.Fonts.Length - 1)];
@@ -153,6 +154,8 @@ public sealed class GuildUi : IUiExtension
         });
         foreach (var screen in new[] { "inventory", "bag" })
             r.AddScreenControls(screen, UiScreens.ItemCells, UiAnchorPlacement.Inside, Cell);
+        // The hand-in button on the inventory window itself (above its Arrange button), while goods are being picked.
+        r.AddScreenControls("inventory", "ArrangeButton", UiAnchorPlacement.Above, InventoryHandIn);
         _hide = r.RegisterAction("hide", a =>
         {
             if (int.TryParse(a.Argument, out int id)) Send(new ToggleMarkers(id) { Tick = Tick });
@@ -534,17 +537,26 @@ public sealed class GuildUi : IUiExtension
     UiNode? Cell(UiScreenContext ctx)
     {
         if (!s_open || ctx.Item is not { } cell || GuildSystem.View is not { } view || !PickShown(view)) return null;
-        var choice = view.HandIn!.Choices.FirstOrDefault(c => c.Who == cell.Owner.Character && c.Cells.Contains(cell.Item.Index));
-        if (choice is null) return null;
-        bool ok = choice.Problem.Length == 0, on = ok && s_picks.Contains(choice.Key);
-        var node = new UiNode($"rq-cell-{choice.Key}-{cell.Item.Index}")
+        var choice = view.HandIn!.Choices.FirstOrDefault(c => c.Who == cell.Owner.Character && c.Cells.Contains(cell.Item.Index)
+            && c.Problem.Length == 0);
+        if (choice is null || RadiantQuestsMod.Context?.Folder is not { } folder) return null;
+        bool on = s_picks.Contains(choice.Key);
+        var node = new UiNode($"rq-cell-{choice.Key}-{cell.Item.Index}") { Style = _cellHit, Action = _cellPick, Argument = choice.Key.ToString() };
+        node.Children.Add(new UiNode($"rq-cellc-{choice.Key}-{cell.Item.Index}", UiNodeKind.Image)
         {
-            Style = !ok ? _cellBad : on ? _cellOn : _cellOk,
-            Action = _cellPick,
-            Argument = ok ? choice.Key.ToString() : "!" + choice.Problem,
-        };
-        if (on) node.Children.Add(new UiNode($"rq-cellv-{choice.Key}-{cell.Item.Index}", UiNodeKind.Label) { Text = "x", Style = _cellMark });
+            Image = System.IO.Path.Combine(folder, on ? "circle-full.png" : "circle-open.png"),
+            Placement = new UiPlacement(14, 14, new UiLength(-7, 0.5f), default, null, 3),
+        });
         return node;
+    }
+
+    /// <summary>The hand-in button on the inventory window: "Hand in (picked/needed)", enabled once enough are picked.</summary>
+    UiNode? InventoryHandIn(UiScreenContext ctx)
+    {
+        if (!s_open || GuildSystem.View is not { } view || !PickShown(view)) return null;
+        var hv = view.HandIn!;
+        int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
+        return Button("rq-inv-give", $"Hand in ({units}/{hv.Need})", _pickGive, "", units >= hv.Need, 170, 1, false, 30);
     }
 
     /// <summary>Whether the pick window is open now: its list came for the quest it was opened for, and it was not closed here.</summary>
@@ -558,33 +570,18 @@ public sealed class GuildUi : IUiExtension
     UiNode PickWindow(UiFrameContext f, GuildView view)
     {
         var hv = view.HandIn!;
-        var win = WindowLayout.Place("pick", f.Viewport, 520, 240);
+        var win = WindowLayout.Place("pick", f.Viewport, 460, 120);
         int lv = win.Font;
-        float s = win.Scale, line = Math.Max(30, 30 * s), headH = Math.Max(32, 30 * s);
+        float s = win.Scale, line = Math.Max(30, 30 * s);
         var w = Frame("rq-pick-win", "pick", win, "Hand in goods", _pickCancel, out var body);
-        // The pick window (his rule, 2026-11-24): choose which goods go; worn ones and ones that don't count say why.
-        {
-            int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
-            var head = Row("rq-pick-h", line);
-            head.Children.Add(Label("rq-pick-t", $"Hand in: {hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-160 * s, 1)));
-            head.Children.Add(Button("rq-pick-give", "Hand in picked", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
-            body.Children.Add(head);
-            body.Children.Add(Label("rq-pick-help", "Click the gold items in your inventory (or tick them below). Red ones can't go: point at them to see why.",
-                _dim[lv], Math.Max(24, 24 * s)));
-            var picks = Scroll("rq-pick", Math.Max(line * 2, win.H - 12 * 2 - headH - line - 18), line);
-            if (hv.Choices.Count == 0) picks.Children.Add(Label("rq-pick-none", "Nothing that fits is carried by your characters at the clerk.", _dim[lv], line));
-            foreach (var c in hv.Choices)
-            {
-                var prow = Row($"rq-pk{c.Key}", line, _row);
-                bool ok = c.Problem.Length == 0, on = ok && s_picks.Contains(c.Key);
-                prow.Children.Add(Button($"rq-pkb{c.Key}", on ? "[x]" : "[ ]", _pickToggle, c.Key.ToString(), ok, 60 * s, lv, on, line));
-                string count = c.Units > 1 ? $"{c.Units} x " : "";
-                prow.Children.Add(Label($"rq-pkt{c.Key}", $"  {count}{c.Name}   ·   {c.Holder}   ·   worth {c.Worth:N0}" + (ok ? "" : $"   ·   {c.Problem}"),
-                    ok ? _text[lv] : _dim[lv], line));
-                picks.Children.Add(prow);
-            }
-            body.Children.Add(picks);
-        }
+        int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
+        var head = Row("rq-pick-h", line);
+        head.Children.Add(Label("rq-pick-t", $"{hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-160 * s, 1)));
+        head.Children.Add(Button("rq-pick-give", "Hand in", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
+        body.Children.Add(head);
+        body.Children.Add(Label("rq-pick-help", hv.Choices.Any(c => c.Problem.Length == 0)
+            ? "Click the items with a yellow circle in your inventory, then Hand in."
+            : "None of your characters at the clerk carry anything that counts.", _dim[lv], Math.Max(24, 24 * s)));
         return w;
     }
 

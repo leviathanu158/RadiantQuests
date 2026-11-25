@@ -90,6 +90,9 @@ Say "Built: $stage" Green
 
 if ($NoInstall) { exit 0 }
 
+# The interface pictures (the hand-in circles), next to the dll.
+Get-ChildItem (Join-Path $here "data\ui") -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $stage -Force }
+
 # 5. Install into Kenshi\mods\RadiantQuests
 if (-not $KenshiDir) { $KenshiDir = Get-Prop $config @("KenshiPath") }
 if (-not $KenshiDir -or -not (Test-Path $KenshiDir)) {
