@@ -90,6 +90,9 @@ Say "Built: $stage" Green
 
 if ($NoInstall) { exit 0 }
 
+# The Workshop preview picture (Steam shows it on the mod's page; the launcher shows it in the mod list).
+$preview = Join-Path $here "data\_$modName.img"
+if (Test-Path $preview) { Copy-Item $preview $stage -Force }
 # The interface pictures (the hand-in circles), next to the dll.
 Get-ChildItem (Join-Path $here "data\ui") -Filter *.png -ErrorAction SilentlyContinue | ForEach-Object { Copy-Item $_.FullName $stage -Force }
 

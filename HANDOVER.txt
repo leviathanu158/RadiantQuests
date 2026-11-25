@@ -248,6 +248,14 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+RELEASE PREP (2026-11-25, step 2; his pipeline C:\KenshiDev\kenshi-workshop-pipeline, the same as Manual Combat's): its own config
+workshop-radiantquests.toml (--config; private first, published_id empty -> new item, written back after the first upload; output
+build-radiantquests; excludes window-layout.json), description-radiantquests.bbcode (written fresh: requirements Meitou 0.22.2+, quest
+kinds, rumours, hand-in, ranks), upload-radiantquests.bat (double-click). Preview: data\_RadiantQuests.img (a placeholder 1024x576 JPEG
+drawn with System.Drawing: gold title on dark; HE MAY REPLACE IT), copied into the mod folder by build.ps1. Validate OK; dry run staged
+7 files (dll, meitou.json, RadiantQuests.mod, _RadiantQuests.img, circle pngs, overrides.json). NOT UPLOADED: the upload is his to start
+(his Steam account). Then: subscribe, check it loads, make it public, set tags on the page. README.md's feature list is old (0.8.16).
+
 STATE 0.10.5 (2026-11-25, step 1 gaps): GuildSystem.GuardCamp (from RecoverQuest.Track): once one of yours is within GuardLook 6000 of a
 recover quest's camp (loaded) and none of the camp's own people stand within twice its area, a guard group of the camp's owners
 (Cat.Lairs owner as a cull target; any of its templates; sized by BroughtSizes for the quest's rank) is spawned at the camp with the
