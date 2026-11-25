@@ -248,6 +248,13 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+WORKSHOP (2026-11-25): uploaded as a PRIVATE item, id 3845587706 (written into the pipeline's workshop-radiantquests.toml). The pipeline's
+vdf_escape was fixed (SteamCMD's VDF reader takes no escapes: \" broke the description, \n showed as text): line breaks stay real,
+straight double quotes become typographic ones (only matters when a description file is sent; Manual Combat sends none). Checked: the
+subscribed copy (workshop\content\233860\3845587706) matches the 0.10.5 build byte for byte, and with the local Kenshi\mods\RadiantQuests
+renamed away the game loaded the Workshop copy ("world ready", "parcel ready", board made). NOTE: a local copy in Kenshi\mods with the
+same name wins over the Workshop one. Left for him: make the item public, set tags (Gameplay, Factions) on the page.
+
 RELEASE PREP (2026-11-25, step 2; his pipeline C:\KenshiDev\kenshi-workshop-pipeline, the same as Manual Combat's): its own config
 workshop-radiantquests.toml (--config; private first, published_id empty -> new item, written back after the first upload; output
 build-radiantquests; excludes window-layout.json), description-radiantquests.bbcode (written fresh: requirements Meitou 0.22.2+, quest
