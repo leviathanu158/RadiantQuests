@@ -248,7 +248,14 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
-STATE 0.9.3 (2026-11-24, from his feedback file "Problems identified for Radiant Quests.txt" (13 points) and his answers; installed):
+MEITOU 0.23.0 (2026-11-25): his install has Meitou 0.23.0 (commit 50673ec7); C:\KenshiRef\MeitouClient checked out at it; build.ps1
+$wantVersion = "0.23.0". The mod builds against it with no errors; the reflected calls still match (PopulationSystem.SpawnPlatoon 9 params
+with long money + int maxMembers; PlayerInterface.Steer(bool)/Notice(string,bool,string); World.ApplyPausedInterfaceCommands()). Changed
+in 0.23.0 near what we use: World.GiveOrder gained an OrderOptions overload (the old one stays as a wrapper); InventoryCommands
+LiesInCells ("back"/"hip" and multi-item mod slots); items/ground/platoon-hold internals. Weapons on the hip or back count as worn in
+the pick window ("take it off first").
+
+STATE 0.9.3 (2026-11-24, from his feedback file "Problems identified for Radiant Quests.txt" (13 points) and his answers; installed; COMMITTED and PUSHED 419a8c3):
  - HIS DECISIONS: hand-in = PICK WINDOW; item pay = REAL PRICE x 1.3-1.6 (rank from that); rank rep = TWO THIRDS (D 500, C 1500, B 3330,
    A 6000, S 10000, SS 16650; his saved settings keep old values until reset); gear quests = FROM LOCAL LOOT, C and up; ambush strength =
    two difficulty bands below the run (Hard C -> at most Easy C; Very Easy C -> at most Hard D); couriers at EVERY rank; ambushers make
