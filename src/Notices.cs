@@ -12,8 +12,17 @@ namespace RadiantQuests;
 public static class Notices
 {
     static readonly ConcurrentQueue<string> s_queue = new();
-    static MethodInfo? s_notice;
+    static MethodInfo? s_notice, s_uiAction, s_isOpen;
+    static FieldInfo? s_screens;
     static bool s_on;
+
+    /// <summary>
+    /// A request to open the game's inventory window (the hand-in pick, his idea 2026-11-25), done on the next frame through the player
+    /// interface's own "inventory" action (as its key does), only when it is not open already. Skipped if a future Meitou renames the parts.
+    /// </summary>
+    static volatile bool s_openInventory;
+
+    public static void OpenInventory() => s_openInventory = true;
 
     public static string Patch(Harmony harmony)
     {
@@ -21,6 +30,10 @@ public static class Notices
         var steer = type is null ? null : AccessTools.Method(type, "Steer", [typeof(bool)]);
         s_notice = type is null ? null : AccessTools.Method(type, "Notice", [typeof(string), typeof(bool), typeof(string)]);
         if (steer is null || s_notice is null) return "message log: PlayerInterface.Steer/Notice not found; quest notices show as toasts only";
+        s_uiAction = AccessTools.Method(type, "ExecuteUiAction", [typeof(string), typeof(string)]);
+        s_screens = AccessTools.Field(type, "FaithfulScreens");
+        s_isOpen = s_screens is null ? null : AccessTools.Method(s_screens.FieldType, "IsOpen", [typeof(string)]);
+        if (s_uiAction is null || s_isOpen is null) RadiantQuestsMod.Log("hand-in: the inventory can't be opened for you in this Meitou (open it yourself)");
         harmony.Patch(steer, prefix: new HarmonyMethod(typeof(Notices), nameof(SteerPrefix)));
         s_on = true;
         return "message log: on";
@@ -38,6 +51,13 @@ public static class Notices
         try
         {
             while (s_queue.TryDequeue(out var text)) s_notice!.Invoke(__instance, [text, false, text]);
+            if (s_openInventory)
+            {
+                s_openInventory = false;
+                if (s_uiAction is not null && s_isOpen is not null && s_screens?.GetValue(__instance) is { } screens
+                    && s_isOpen.Invoke(screens, ["inventory"]) is false)
+                    s_uiAction.Invoke(__instance, ["inventory", ""]);
+            }
         }
         catch (Exception e)
         {

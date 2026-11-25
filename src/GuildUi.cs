@@ -128,6 +128,7 @@ public sealed class GuildUi : IUiExtension
             s_pickQuest = id;
             s_pickClosed = -1;
             Send(new ShowHandIn(s_clerk, id) { Tick = Tick });
+            Notices.OpenInventory();   // the goods are picked in the inventory (his idea, 2026-11-25)
         });
         _pickToggle = r.RegisterAction("picktoggle", a =>
         {

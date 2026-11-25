@@ -248,6 +248,11 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.9.6 (2026-11-25, his report: "the inventory window didn't open"): Hand in on goods now also opens the inventory (the selected
+character's, as the key does) when it is not open: Notices.OpenInventory() sets a flag, the Steer prefix (host thread, every frame) calls
+PlayerInterface.ExecuteUiAction("inventory", "") by reflection after checking FaithfulScreens.IsOpen("inventory"). If a Meitou renames
+them the log says "hand-in: the inventory can't be opened for you". Hooks found on 0.23.0 (no such line). The look: HE CHECKS.
+
 STATE 0.9.5 (2026-11-25, his idea: pick the hand-in goods in the game's own inventory screen): GuildUi.Cell, registered with
 AddScreenControls("inventory"/"bag", UiScreens.ItemCells, Inside): while the pick window is open, each inventory cell holding a counted
 item gets a gold tint (click picks/unpicks its line; picked = bright gold + "x"), a matching item that can't go a red tint (hover: the
