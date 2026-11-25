@@ -248,6 +248,13 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.9.7 (2026-11-25, his flow: Hand in -> inventory opens -> valid items get a small yellow circle at the bottom -> click fills it ->
+Hand in button -> reward): the cell mark is now a 14 px circle image (data/ui/circle-open.png and circle-full.png, copied next to the dll
+by build.ps1; UiNodeKind.Image with the full path under ModContext.Folder) at the bottom centre of each valid cell, inside a transparent
+clickable panel; items that can't go get no mark. "Hand in (picked/needed)" button on the inventory window itself (AddScreenControls
+"inventory", anchor "ArrangeButton", Above). The small "Hand in goods" window is now a slim bar (quest, count, Hand in, Close).
+The look: HE CHECKS (if the ArrangeButton anchor is missing the button doesn't show; the bar still works).
+
 STATE 0.9.6 (2026-11-25, his report: "the inventory window didn't open"): Hand in on goods now also opens the inventory (the selected
 character's, as the key does) when it is not open: Notices.OpenInventory() sets a flag, the Steer prefix (host thread, every frame) calls
 PlayerInterface.ExecuteUiAction("inventory", "") by reflection after checking FaithfulScreens.IsOpen("inventory"). If a Meitou renames
