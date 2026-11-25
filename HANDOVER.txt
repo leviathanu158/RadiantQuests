@@ -248,6 +248,13 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.2 (2026-11-25, his rule: not every villager knows, and their precision is random): AskTown rolls per person, per quest, per
+game day (seeded by the NPC's slot+generation, the quest and the day: asking the same person again tells the same; asking around
+differs). VillagerKnows 0.4; quality: really bad 20% (way one step off, distance one word off, "..., I think"), poor 25% ("I heard X
+are somewhere out east"), fair 30%, good 17% (+ region), great 8% (+ nearest named place). A villager's word becomes the quest's rumour
+only when no better one was bought. The per-quest 6 h cooldown is gone. Tested: Barman Bisera: "I heard the Carrion Crawler are
+somewhere out east."
+
 STATE 0.10.1 (2026-11-25, his wording rules): fight rumours are up to date and told FROM WHERE THEY ARE ASKED ("here" = the clerk, or the
 townsperson): "The Dust Bandits were last seen roaming north-east of here, a short walk out." (+ region at level 1, + nearest named place
 at level 2; under 1500 units "right around here"). Distance words (his "better words"): just outside town (<6000), a short walk out

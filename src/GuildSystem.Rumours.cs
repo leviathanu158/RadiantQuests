@@ -187,6 +187,40 @@ public sealed partial class GuildSystem
         };
     }
 
+    /// <summary>
+    /// A townsperson's word on a fight quest (his rule, 2026-11-25: from really bad to really good): <paramref name="quality"/> 0 really bad
+    /// (the way one step off, the distance one word off), 1 poor (only roughly which way), 2 fair (way and distance), 3 good (+ region), 4
+    /// great (+ nearest named place). Told from where they stand.
+    /// </summary>
+    string VillagerRumour(World world, Quest q, int quality, Vector2 here, Dice dice)
+    {
+        if (!_markers.TryGetValue(q.Id, out var seen) || seen.Count == 0) return "";
+        var at = seen.OrderBy(m => Vector2.Distance(m, here)).First();
+        string verb = CountQuest.IsLoner(q) ? "was last seen" : "were last seen";
+        if (Vector2.Distance(at, here) < 1500 && quality >= 2) return $"{Who(q)} {verb} roaming right around here.";
+        string way = Way(at, here), far = Distance(at, here);
+        if (quality == 0)
+        {
+            way = WayOff(way, dice.Chance(0.5) ? 1 : -1);
+            far = DistanceOff(far, dice.Chance(0.5) ? 1 : -1);
+        }
+        return quality switch
+        {
+            0 => $"{Who(q)} {verb} roaming {way} of here, {far}, I think.",
+            1 => $"I heard {Who(q).ToLowerInvariant()[..1] + Who(q)[1..]} {(CountQuest.IsLoner(q) ? "is" : "are")} somewhere out {way}.",
+            2 => $"{Who(q)} {verb} roaming {way} of here, {far}.",
+            3 => $"{Who(q)} {verb} roaming {way} of here, {far}{InRegion(at)}.",
+            _ => $"{Who(q)} {verb} roaming {way} of here, {far}{InRegion(at)}{Landmark(at, q.Site)}.",
+        };
+    }
+
+    static readonly string[] s_ways = ["north", "north-east", "east", "south-east", "south", "south-west", "west", "north-west"];
+    static readonly string[] s_fars = ["just outside town", "a short walk out", "a good walk off", "a long trek away", "far out in the wastes"];
+
+    static string WayOff(string way, int step) => Array.IndexOf(s_ways, way) is var i and >= 0 ? s_ways[(i + step + 8) % 8] : way;
+
+    static string DistanceOff(string far, int step) => Array.IndexOf(s_fars, far) is var i and >= 0 ? s_fars[Math.Clamp(i + step, 0, s_fars.Length - 1)] : far;
+
     /// <summary>How far, as people in the wastes say it: five steps from just outside town to far out in the wastes.</summary>
     static string Distance(Vector2 at, Vector2 from) => Vector2.Distance(at, from) switch
     {
@@ -225,22 +259,38 @@ public sealed partial class GuildSystem
     {
         string name = world.Characters.NameOf(a.Npc);
         if (name.Length == 0) name = "They";
-        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)world.Tick * 0x9E3779B97F4A7C15UL + (ulong)a.Npc.Slot));
+        var here = Access.At(world, a.Npc) ?? Vector2.Zero;
         var told = new List<string>();
         foreach (var q in _s.Quests.Where(q => !q.Done && HasRumours(q)).OrderBy(q => q.Id))
         {
-            if (q.TownAskHours >= 0 && world.GameHours - q.TownAskHours < 6) continue;
-            q.TownAskHours = world.GameHours;
-            if (!dice.Chance(0.5)) continue;
-            // Told from where they stand ("north-east of here" means of this town).
-            string line = RumourOf(world, q, 0, Access.At(world, a.Npc));
-            if (IsFight(q) || q.RumourLevel == 0) Heard(q, line, Day(world));
+            // The same person tells the same thing all day (asking again doesn't reroll); asking around does (his rule).
+            var dice = new Dice(world.Seed ^ Rng.Mix(((ulong)(uint)a.Npc.Slot << 32 | (uint)a.Npc.Generation) * 0x9E3779B97F4A7C15UL
+                + (ulong)q.Id * 0xC2B2AE3D27D4EB4FUL + (ulong)Day(world)));
+            if (!dice.Chance(VillagerKnows)) continue;
+            string line;
+            if (IsFight(q))
+            {
+                double r = dice.Double();
+                int quality = r < 0.20 ? 0 : r < 0.45 ? 1 : r < 0.75 ? 2 : r < 0.92 ? 3 : 4;
+                line = VillagerRumour(world, q, quality, here, dice);
+                if (line.Length == 0) continue;
+                // A villager's word is kept as a rumour only when nothing better was bought.
+                if (q.RumourLevel == 0) Heard(q, line, Day(world));
+            }
+            else
+            {
+                line = RumourOf(world, q, 0, here);
+                if (q.RumourLevel == 0) Heard(q, line, Day(world));
+            }
             told.Add(line);
         }
         _dirty = true;
         RadiantQuestsMod.Toast(told.Count == 0 ? $"{name} hasn't heard anything about your work."
             : $"{name}: \"{string.Join(" ", told.Take(2))}\"");
     }
+
+    /// <summary>How likely a townsperson is to have heard anything of one of your quests (the rest know nothing).</summary>
+    const double VillagerKnows = 0.4;
 
     /// <summary>"near here", "some way off", "far from here", by the straight distance.</summary>
     static string Far(Vector2 at, Vector2 from) => Vector2.Distance(at, from) switch
