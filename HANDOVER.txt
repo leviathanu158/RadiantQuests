@@ -254,7 +254,7 @@ build-radiantquests; excludes window-layout.json), description-radiantquests.bbc
 kinds, rumours, hand-in, ranks), upload-radiantquests.bat (double-click). Preview: data\_RadiantQuests.img (a placeholder 1024x576 JPEG
 drawn with System.Drawing: gold title on dark; HE MAY REPLACE IT), copied into the mod folder by build.ps1. Validate OK; dry run staged
 7 files (dll, meitou.json, RadiantQuests.mod, _RadiantQuests.img, circle pngs, overrides.json). NOT UPLOADED: the upload is his to start
-(his Steam account). Then: subscribe, check it loads, make it public, set tags on the page. README.md's feature list is old (0.8.16).
+(his Steam account). Then: subscribe, check it loads, make it public, set tags on the page. README.md rewritten for players (0.10.5): requirements, getting started, quest table, rumours, hand-in, settings, removing.
 
 STATE 0.10.5 (2026-11-25, step 1 gaps): GuildSystem.GuardCamp (from RecoverQuest.Track): once one of yours is within GuardLook 6000 of a
 recover quest's camp (loaded) and none of the camp's own people stand within twice its area, a guard group of the camp's owners
