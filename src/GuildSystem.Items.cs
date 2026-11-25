@@ -136,6 +136,37 @@ public sealed partial class GuildSystem : ITradeObserver
         return g.Key;
     }
 
+    /// <summary>
+    /// A recover quest's camp found empty (cleared before, his list 2026-11-25): once one of yours comes within <see cref="GuardLook"/> and
+    /// nobody of the camp's own stands there, a guard group of the camp's owners is brought into the camp, sized to the quest's rank. Once
+    /// per quest (Quest.Spawned); cleared with the quest. A wild nest with no owners gets none (its beasts come back on their own).
+    /// </summary>
+    public void GuardCamp(World world, Quest q)
+    {
+        if (q.Spawned || q.ItemHeld || !_set.SpawnTargets || Access.Site(q.DestSite) is not { } camp
+            || !Cat.Lairs.TryGetValue(camp.TownId, out var lair)) return;
+        var (people, yours) = Access.CampPeople(world, q.DestSite, camp.At);
+        if (!yours.Any(d => d <= GuardLook)) return;   // not near: the camp may not be loaded, so who is there can't be told
+        var (area, _, _) = LairQuest.Sizes(camp);
+        if (people.Any(p => p.Standing && p.FromCamp <= area * 2)) return;
+        q.Spawned = true;
+        _dirty = true;
+        if (lair.Owner is null || Cat.FindTarget(Catalog.Cull, lair.Owner) is not { } owners) return;
+        var dice = new Dice(world.Seed ^ Rng.Mix((ulong)q.Id * 0x9E3779B97F4A7C15UL + 0x67756172UL));
+        var templates = Survey.AnyTemplates(Cat, owners).Where(id => Access.SpawnFaction(id) is var f && f >= 0 && f != _data.PlayerFaction).ToList();
+        var sizes = CountQuest.BroughtSizes(owners, CountQuest.Unit(owners), Math.Clamp(q.Rank, 0, Ranks.Top), templates, 2, Catalog.MostCount);
+        if (templates.Count == 0 || sizes.Count == 0) return;
+        string template = templates[dice.Int(0, templates.Count - 1)];
+        int size = sizes[dice.Int(0, sizes.Count - 1)];
+        var (got, _) = Access.Spawn(world, Access.SpawnFaction(template), template, q.DestSite, camp.At, q.Tag, size);
+        if (got <= 0) return;
+        RadiantQuestsMod.Detail($"quest #{q.Id}: camp {camp.Name.Trim()} empty, {got} {owners.Name.Trim()} brought in to guard it");
+        RadiantQuestsMod.Toast($"Someone has moved back into {camp.Name.Trim()}: the {q.TargetName} is guarded.");
+    }
+
+    /// <summary>How near one of yours must be for an empty recover camp to get its guards (the camp is loaded then).</summary>
+    const float GuardLook = 6000;
+
     /// <summary>How often an ambush is a group rather than whatever fits (a lone strong beast included).</summary>
     const double AmbushGroupChance = 0.65;
 

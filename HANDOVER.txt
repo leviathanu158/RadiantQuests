@@ -248,6 +248,15 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.5 (2026-11-25, step 1 gaps): GuildSystem.GuardCamp (from RecoverQuest.Track): once one of yours is within GuardLook 6000 of a
+recover quest's camp (loaded) and none of the camp's own people stand within twice its area, a guard group of the camp's owners
+(Cat.Lairs owner as a cull target; any of its templates; sized by BroughtSizes for the quest's rank) is spawned at the camp with the
+quest's tag, once (Quest.Spawned); RecoverQuest.End now also RemoveSpawned. Wild nests (no owner): none. Board mix now settings
+(Boards): "Fights over item work" RealFightWeight 2, "Empty slots become item work" ItemFallback 0.5. mod-check PASS, board builds.
+STEP 1 LEFT: performance check on his full list (needs his "All working mods" preset); The Wasteland Remembers link (when it runs on
+0.23 and its API can be read). Hard-to-stage cases (loner by others, town distance, partial group pay, guards, parcel win-back, courier
+delivery, sneaking courier) are left to real play (his call 2026-11-25).
+
 STATE 0.10.4 (2026-11-25, his rule: ambushes may be groups too, random for variety): SpawnAmbush rolls AmbushGroupChance 0.65: a group
 (only kinds of which 2+ fit under the cap, a random size of those), else anything that fits (a lone strong beast included); no kind makes
 a group: SpawnAmbushAny. Tested: D courier 1 Robot Spider Mossy (cap 669), C 3 Dark Reavers (cap 2543), B 3 Mudcrab (cap 4861).

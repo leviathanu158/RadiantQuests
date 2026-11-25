@@ -386,10 +386,12 @@ public sealed partial class GuildSystem
     const double ItemShare = 0.33;
 
     /// <summary>
-    /// The board's fight and item mix (his rule, 2026-11-24: variety, nothing locked): with real fights around, a slot is a fight this many
-    /// times to one item; a slot whose bring-in roll failed becomes item work at this chance (else it stays empty).
+    /// The board's fight and item mix (his rule, 2026-11-24: variety, nothing locked; settings since 0.10.5): with real fights around, a slot
+    /// is a fight this many times to one item; a slot whose bring-in roll failed becomes item work at this chance (else it stays empty).
     /// </summary>
-    const double RealFightWeight = 2, ItemFallback = 0.5;
+    static double RealFightWeight => Math.Max(0, RadiantQuestsMod.Settings.RealFightWeight);
+
+    static double ItemFallback => Math.Clamp(RadiantQuestsMod.Settings.ItemFallback, 0, 1);
 
     static bool IsItemKind(string kind) => kind is ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find or ItemQuestKinds.Courier
         or ItemQuestKinds.Recover;

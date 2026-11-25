@@ -116,6 +116,15 @@ public sealed class GuildSettings
         Hint = "The chance that a quest bringing in new enemies picks ones that don't live in the region (a rare sight). 0: only local kinds.")]
     public double StrayChance { get; set; } = 0.15;
 
+    // The board's fight and item mix (his rule, 2026-11-24: variety, nothing locked).
+    [Setting("Fights over item work", Min = 0, Max = 10, Step = 0.5, SubGroup = "Boards",
+        Hint = "Where real fights are around, how many times more often a board slot is a fight than item work. 2: two fights for each item quest, on average.")]
+    public double RealFightWeight { get; set; } = 2;
+
+    [Setting("Empty slots become item work", Min = 0, Max = 1, Step = 0.05, SubGroup = "Boards",
+        Hint = "When a slot's roll to bring new enemies in fails, the chance it becomes item work instead of staying empty.")]
+    public double ItemFallback { get; set; } = 0.5;
+
     [Setting("Area danger share", Min = 0, Max = 1, Step = 0.05, SubGroup = "Boards",
         Hint = "How much of the strength of other things hostile to you close to a quest's place (groups and camps) adds to its difficulty. A quest rises at most one rank. 0: off.")]
     public double DangerShare { get; set; } = 0.25;

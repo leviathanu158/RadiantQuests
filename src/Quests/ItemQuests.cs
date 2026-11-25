@@ -646,6 +646,7 @@ public sealed class RecoverQuest : IQuestType
 
     public TrackResult Track(World world, GuildSystem guild, Quest q, List<Vector2> markers)
     {
+        guild.GuardCamp(world, q);
         var found = guild.Access.FindTagged(world, q.Tag);
         if (found is not { } f)
         {
@@ -695,5 +696,9 @@ public sealed class RecoverQuest : IQuestType
         if (record == q.TargetId) q.SaleSeen = true;
     }
 
-    public void End(World world, GuildSystem guild, Quest q) => guild.Access.RemoveTagged(world, q.Tag);
+    public void End(World world, GuildSystem guild, Quest q)
+    {
+        guild.Access.RemoveTagged(world, q.Tag);
+        guild.RemoveSpawned(world, q);   // guards brought into an empty camp
+    }
 }
