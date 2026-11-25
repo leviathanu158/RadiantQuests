@@ -272,7 +272,11 @@ public sealed class GuildUi : IUiExtension
             if (s_open && view is not null)
             {
                 if (!view.Clerks.ContainsKey(s_clerk)) s_open = false;
-                else root.Children.Add(Window(f, view));
+                else
+                {
+                    root.Children.Add(Window(f, view));
+                    if (PickShown(view)) root.Children.Add(PickWindow(f, view));
+                }
             }
             else if (s_journal && view is not null) root.Children.Add(Journal(f, view));
             if (s_toasts.Count > 0) root.Children.Add(Toasts());
@@ -503,16 +507,32 @@ public sealed class GuildUi : IUiExtension
         }
         body.Children.Add(mine);
 
+        return w;
+    }
+
+    /// <summary>Whether the pick window is open now: its list came for the quest it was opened for, and it was not closed here.</summary>
+    static bool PickShown(GuildView view) => view.HandIn is { } hv && hv.QuestId == s_pickQuest && s_pickClosed != hv.QuestId
+        && view.Quests.Any(q => q.Id == hv.QuestId);
+
+    /// <summary>
+    /// The pick window (his rule, 2026-11-24): its own window beside the clerk's (his report: drawn inside the clerk window it fell below the
+    /// window's edge and never showed). Choose which goods go; worn ones and ones that don't count say why.
+    /// </summary>
+    UiNode PickWindow(UiFrameContext f, GuildView view)
+    {
+        var hv = view.HandIn!;
+        var win = WindowLayout.Place("pick", f.Viewport, 520, 240);
+        int lv = win.Font;
+        float s = win.Scale, line = Math.Max(30, 30 * s), headH = Math.Max(32, 30 * s);
+        var w = Frame("rq-pick-win", "pick", win, "Hand in goods", _pickCancel, out var body);
         // The pick window (his rule, 2026-11-24): choose which goods go; worn ones and ones that don't count say why.
-        if (view.HandIn is { } hv && hv.QuestId == s_pickQuest && s_pickClosed != hv.QuestId && view.Quests.Any(q => q.Id == hv.QuestId))
         {
             int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
             var head = Row("rq-pick-h", line);
             head.Children.Add(Label("rq-pick-t", $"Hand in: {hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-260 * s, 1)));
             head.Children.Add(Button("rq-pick-give", "Hand in picked", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
-            head.Children.Add(Button("rq-pick-x", "Close", _pickCancel, "", true, 100 * s, lv, false, line));
             body.Children.Add(head);
-            var picks = Scroll("rq-pick", Math.Max(line * 2, listH), line);
+            var picks = Scroll("rq-pick", Math.Max(line * 2, win.H - 12 * 2 - headH - line - 18), line);
             if (hv.Choices.Count == 0) picks.Children.Add(Label("rq-pick-none", "Nothing that fits is carried by your characters at the clerk.", _dim[lv], line));
             foreach (var c in hv.Choices)
             {

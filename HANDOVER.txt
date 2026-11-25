@@ -248,6 +248,11 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.9.4 (2026-11-25, his report "Hand in bug": clicking Hand in on an item quest did nothing): the pick list was drawn at the bottom of
+the clerk window, below the quest list, outside the window's height, so it never showed. Now its own window "Hand in goods"
+(GuildUi.PickWindow, WindowLayout "pick", movable/resizable, Close = _pickCancel), shown beside the clerk window while the list is open.
+Checked on his save "Hand in Bug": the list for "Bring 1 Iron Plates" holds "1x Iron Plates (Senka) worth 135". The look: HE CHECKS.
+
 MEITOU 0.23.0 (2026-11-25): his install has Meitou 0.23.0 (commit 50673ec7); C:\KenshiRef\MeitouClient checked out at it; build.ps1
 $wantVersion = "0.23.0". The mod builds against it with no errors; the reflected calls still match (PopulationSystem.SpawnPlatoon 9 params
 with long money + int maxMembers; PlayerInterface.Steer(bool)/Notice(string,bool,string); World.ApplyPausedInterfaceCommands()). Changed
