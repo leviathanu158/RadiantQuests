@@ -821,20 +821,25 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
         double heading = Math.Atan2(way.Y, way.X);
         var others = Access.Groups(world).Where(g => g.ModSpawned && g.Tag.StartsWith("radiantquests:", StringComparison.Ordinal)).Select(g => g.At).ToList();
         int side = dice.Chance(0.5) ? 1 : -1;
-        for (float r = 3500; r <= 9000; r += 750)
-            for (int i = 0; i <= 10; i++)
+        int region = 0, seen = 0, town = 0, crowded = 0, ground = 0;
+        // A narrow cone first (3500-9000 out, 50 degrees either side); when towns, sight or other groups fill it (his test: a run past
+        // Squin found nothing), a wider one (up to 15000 out, 100 degrees either side).
+        foreach (var (far, steps) in new[] { (9000f, 5), (15000f, 10) })
+        for (float r = 3500; r <= far; r += 750)
+            for (int i = 0; i <= steps * 2; i++)
             {
-                // 0, +10, -10, +20, -20 ... +50, -50 degrees (the first side seeded).
+                // 0, +10, -10, +20, -20 ... degrees (the first side seeded).
                 double off = (i + 1) / 2 * 10 * (i % 2 == 1 ? side : -side) * Math.PI / 180;
                 var p = at + new Vector2((float)Math.Cos(heading + off), (float)Math.Sin(heading + off)) * r;
-                if (Access.Region(p) is not { } g || !regions.Contains(g)) continue;
-                if (Access.YoursNearPoint(world, p, SightReach)) continue;
-                if (NearSettlement(p)) continue;
-                if (others.Any(o => Vector2.Distance(o, p) < SpawnSpacing)) continue;
-                if (Access.SpotProblem(world, p, at) is not null) continue;
+                if (Access.Region(p) is not { } g || !regions.Contains(g)) { region++; continue; }
+                if (Access.YoursNearPoint(world, p, SightReach)) { seen++; continue; }
+                if (NearSettlement(p)) { town++; continue; }
+                if (others.Any(o => Vector2.Distance(o, p) < SpawnSpacing)) { crowded++; continue; }
+                if (Access.SpotProblem(world, p, at) is not null) { ground++; continue; }
                 return p;
             }
-        RadiantQuestsMod.Detail($"no ambush spot ahead of {at.X:0},{at.Y:0}");
+        RadiantQuestsMod.Detail($"no ambush spot ahead of {at.X:0},{at.Y:0}: {region} outside the kind's regions, {seen} in your sight, {town} at a town, "
+            + $"{crowded} near another group, {ground} bad ground");
         return null;
     }
 

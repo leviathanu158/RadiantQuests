@@ -248,6 +248,15 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.3 (2026-11-25, step 1 checks on "Hand in Bug", Manual Combat off): VERIFIED in game: fight markers hidden when far and shown
+near (NearReveal); "Your squad spotted the Dust Bandit Loner, in Border Zone."; ambush cap (D courier: 1 Dark Reaver, cap 669; C: 1 Dust
+Hound, cap 2699; B: 1 Beak Turtle, cap 4011; people or hostile predators only). FIXED: AheadSpot found no ambush spot when the narrow cone
+ran past a town (C and B couriers near Squin): a second, wider pass (up to 15000 out, 100 degrees either side); the "no ambush spot"
+log now counts why (region, sight, town, crowded, ground). Test filter "take <kind> <rank> <text>" also matches the quest text
+("Loner"). NOT VERIFIED (test tools couldn't reach the loner's character: agent kill/world found nobody at his marker, probably not
+loaded as a character): loner called off when someone else kills him; town-distance of spawns (agent "towns" JSON not parsed); partial
+pay for broken groups. -> HIS HAND TESTS.
+
 STATE 0.10.2 (2026-11-25, his rule: not every villager knows, and their precision is random): AskTown rolls per person, per quest, per
 game day (seeded by the NPC's slot+generation, the quest and the day: asking the same person again tells the same; asking around
 differs). VillagerKnows 0.4; quality: really bad 20% (way one step off, distance one word off, "..., I think"), poor 25% ("I heard X

@@ -53,7 +53,8 @@ public sealed partial class GuildSystem
             var rctx = new BoardContext(world, this, survey, Tab.General, _data.FactionIndex(info.Faction), info.Faction,
                 new Dice(world.Seed ^ Rng.Mix((ulong)world.Tick * 131 + (ulong)roll + 0x7465)), info.Site);
             foreach (var c in type.Candidates(rctx, Math.Clamp(rank, 0, Ranks.Top)))
-                if (filter.Length == 0 || c.Offer.TargetName.Contains(filter, StringComparison.OrdinalIgnoreCase)) { pick = c; break; }
+                if (filter.Length == 0 || c.Offer.TargetName.Contains(filter, StringComparison.OrdinalIgnoreCase)
+                    || c.Offer.Describe().Contains(filter, StringComparison.OrdinalIgnoreCase)) { pick = c; break; }
             if (filter.Length == 0) break;
         }
         if (pick is not { } made) { RadiantQuestsMod.Log($"test offer: no {kind} at {Ranks.Name(rank)}{(filter.Length > 0 ? $" matching {filter}" : "")}"); return; }
