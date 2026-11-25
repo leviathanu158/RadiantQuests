@@ -1,4 +1,4 @@
-# Radiant Quests for Meitou (v0.9.4)
+# Radiant Quests for Meitou (v0.9.5)
 
 Repeatable guild quests for Kenshi on Meitou (the open-source Kenshi engine). Take work from a faction's bartender, do it, and get paid in cats
 and guild rep. Guild rep raises your guild rank from E to SS, which opens harder, better-paid work.

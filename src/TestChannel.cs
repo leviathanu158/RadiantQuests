@@ -166,7 +166,7 @@ internal static class TestChannel
                 return "sent (then: picks)";
             case "picks":
                 return view?.HandIn is { } hv ? $"#{hv.QuestId} need {hv.Need}: " + string.Join(" | ", hv.Choices.Select(c =>
-                    $"[{c.Key}] {c.Units}x {c.Name} ({c.Holder}) worth {c.Worth}{(c.Problem.Length > 0 ? " - " + c.Problem : "")}")) : "no pick list";
+                    $"[{c.Key}] {c.Units}x {c.Name} ({c.Holder} {c.Who}, cells {string.Join(",", c.Cells)}) worth {c.Worth}{(c.Problem.Length > 0 ? " - " + c.Problem : "")}")) : "no pick list";
             case "give":
                 if (s_openIndex < 0 || s_openIndex >= clerks.Count) return "open a clerk first";
                 Send(new HandInPicked(clerks[s_openIndex].Id, Arg(1), [.. p.Skip(2).Select(k => int.TryParse(k, out int v) ? v : -1)]) { Tick = tick });

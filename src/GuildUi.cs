@@ -30,7 +30,7 @@ public sealed class GuildUi : IUiExtension
 
     static readonly List<(string Text, long Until)> s_toasts = [];
 
-    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "";
+    string _close = "", _tab = "", _rank = "", _accept = "", _handIn = "", _abandon = "", _reroll = "", _journal = "", _rumour = "", _hide = "", _pickOpen = "", _pickToggle = "", _pickGive = "", _pickCancel = "", _cellPick = "", _cellOk = "", _cellOn = "", _cellBad = "", _cellMark = "";
 
     /// <summary>The pick window's ticked lines (keys), for the quest it was opened for; a quest id whose window was closed here.</summary>
     static readonly HashSet<int> s_picks = [];
@@ -48,6 +48,12 @@ public sealed class GuildUi : IUiExtension
         var gold = new Vector4(0.93f, 0.80f, 0.45f, 1);
         _window = r.RegisterStyle("window", new UiStyle { Background = new(0.07f, 0.065f, 0.055f, 0.95f) });
         _row = r.RegisterStyle("row", new UiStyle { Background = new(1, 1, 1, 0.04f) });
+        // The inventory cells of a hand-in (his idea, 2026-11-25): gold tint = counts (click to pick), bright gold = picked, red = doesn't count.
+        _cellOk = r.RegisterStyle("cell-ok", new UiStyle { Background = new(0.95f, 0.75f, 0.2f, 0.22f), Hover = new(0.95f, 0.75f, 0.2f, 0.4f) });
+        _cellOn = r.RegisterStyle("cell-on", new UiStyle { Background = new(0.95f, 0.75f, 0.2f, 0.55f), Hover = new(0.95f, 0.75f, 0.2f, 0.65f),
+            Text = new(0.1f, 0.08f, 0.02f, 1) });
+        _cellBad = r.RegisterStyle("cell-bad", new UiStyle { Background = new(0.85f, 0.2f, 0.15f, 0.28f), Hover = new(0.85f, 0.2f, 0.15f, 0.42f) });
+        _cellMark = r.RegisterStyle("cell-mark", new UiStyle { Text = new(0.1f, 0.08f, 0.02f, 1) });
         for (int i = 0; i < WindowLayout.Fonts.Length; i++)
         {
             string font = WindowLayout.Fonts[i], bigger = WindowLayout.Fonts[Math.Min(i + 1, WindowLayout.Fonts.Length - 1)];
@@ -137,6 +143,15 @@ public sealed class GuildUi : IUiExtension
             s_pickClosed = s_pickQuest;
             s_picks.Clear();
         });
+        // A click on a marked inventory cell picks or unpicks its line; hovering a red one shows why it doesn't count.
+        _cellPick = r.RegisterAction("cellpick", a =>
+        {
+            if (a.Kind == UiEventKind.Enter && a.Argument.StartsWith('!')) s_hint = (a.Argument[1..], a.Position);
+            else if (a.Kind == UiEventKind.Leave) s_hint = null;
+            else if (a.Kind == UiEventKind.Press && int.TryParse(a.Argument, out int key) && !s_picks.Remove(key)) s_picks.Add(key);
+        });
+        foreach (var screen in new[] { "inventory", "bag" })
+            r.AddScreenControls(screen, UiScreens.ItemCells, UiAnchorPlacement.Inside, Cell);
         _hide = r.RegisterAction("hide", a =>
         {
             if (int.TryParse(a.Argument, out int id)) Send(new ToggleMarkers(id) { Tick = Tick });
@@ -510,6 +525,27 @@ public sealed class GuildUi : IUiExtension
         return w;
     }
 
+    /// <summary>
+    /// The mark on one inventory cell while a hand-in's goods are being picked (his idea, 2026-11-25: pick them in the inventory itself):
+    /// nothing for items that don't matter; gold for one that counts (a click picks it, again unpicks), bright gold with a check once picked; red
+    /// for one that matches but can't go (worn, stolen from this faction, worth too little: hover for why).
+    /// </summary>
+    UiNode? Cell(UiScreenContext ctx)
+    {
+        if (!s_open || ctx.Item is not { } cell || GuildSystem.View is not { } view || !PickShown(view)) return null;
+        var choice = view.HandIn!.Choices.FirstOrDefault(c => c.Who == cell.Owner.Character && c.Cells.Contains(cell.Item.Index));
+        if (choice is null) return null;
+        bool ok = choice.Problem.Length == 0, on = ok && s_picks.Contains(choice.Key);
+        var node = new UiNode($"rq-cell-{choice.Key}-{cell.Item.Index}")
+        {
+            Style = !ok ? _cellBad : on ? _cellOn : _cellOk,
+            Action = _cellPick,
+            Argument = ok ? choice.Key.ToString() : "!" + choice.Problem,
+        };
+        if (on) node.Children.Add(new UiNode($"rq-cellv-{choice.Key}-{cell.Item.Index}", UiNodeKind.Label) { Text = "x", Style = _cellMark });
+        return node;
+    }
+
     /// <summary>Whether the pick window is open now: its list came for the quest it was opened for, and it was not closed here.</summary>
     static bool PickShown(GuildView view) => view.HandIn is { } hv && hv.QuestId == s_pickQuest && s_pickClosed != hv.QuestId
         && view.Quests.Any(q => q.Id == hv.QuestId);
@@ -529,9 +565,11 @@ public sealed class GuildUi : IUiExtension
         {
             int units = hv.Choices.Where(c => s_picks.Contains(c.Key) && c.Problem.Length == 0).Sum(c => c.Units);
             var head = Row("rq-pick-h", line);
-            head.Children.Add(Label("rq-pick-t", $"Hand in: {hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-260 * s, 1)));
+            head.Children.Add(Label("rq-pick-t", $"Hand in: {hv.Quest}   ·   picked {units} of {hv.Need}", _title[lv], line, new UiLength(-160 * s, 1)));
             head.Children.Add(Button("rq-pick-give", "Hand in picked", _pickGive, "", units >= hv.Need, 150 * s, lv, false, line));
             body.Children.Add(head);
+            body.Children.Add(Label("rq-pick-help", "Click the gold items in your inventory (or tick them below). Red ones can't go: point at them to see why.",
+                _dim[lv], Math.Max(24, 24 * s)));
             var picks = Scroll("rq-pick", Math.Max(line * 2, win.H - 12 * 2 - headH - line - 18), line);
             if (hv.Choices.Count == 0) picks.Children.Add(Label("rq-pick-none", "Nothing that fits is carried by your characters at the clerk.", _dim[lv], line));
             foreach (var c in hv.Choices)

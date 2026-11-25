@@ -8,7 +8,12 @@ using Meitou.Simulation;
 namespace RadiantQuests;
 
 /// <summary>One line of the pick window: its key, the item, who carries it, its worth (one), how many, and why it can't go ("" when it can).</summary>
-public sealed record HandInChoice(int Key, string Name, string Holder, int Worth, int Units, string Problem);
+public sealed record HandInChoice(int Key, string Name, string Holder, int Worth, int Units, string Problem)
+{
+    /// <summary>Who carries it, and where its items sit in their inventory window (for marking the cells there).</summary>
+    public CharacterId Who { get; init; }
+    public IReadOnlyList<int> Cells { get; init; } = [];
+}
 
 /// <summary>The pick window: the quest, how many it needs, and what can be picked.</summary>
 public sealed record HandInView(int QuestId, string Quest, int Need, IReadOnlyList<HandInChoice> Choices);
@@ -21,8 +26,25 @@ public sealed partial class GuildSystem
     /// <summary>The items picked for the hand-in being made now (null: none; the quest takes its own way).</summary>
     public IReadOnlyList<WorldAccess.Offered>? Picked { get; private set; }
 
-    void OpenHandIn(World world, CharacterId clerkId, int questId)
+    /// <summary>The clerk the pick window was opened at (its list is refreshed while it is open, so moved items stay marked right).</summary>
+    CharacterId _handInClerk;
+
+    /// <summary>Refreshes an open pick window's list (items moved, picked up or used since): at each publish.</summary>
+    void RefreshHandIn(World world)
     {
+        if (_handInView is not { } hv) return;
+        // (A quiet check: walking away from the clerk just closes the list, no message.)
+        if (!_s.Quests.Any(x => x.Id == hv.QuestId) || !_clerks.ContainsKey(_handInClerk) || !Access.YoursNear(world, _handInClerk, ClerkReach))
+        {
+            CloseHandIn();
+            return;
+        }
+        OpenHandIn(world, _handInClerk, hv.QuestId, quiet: true);
+    }
+
+    void OpenHandIn(World world, CharacterId clerkId, int questId, bool quiet = false)
+    {
+        _handInClerk = clerkId;
         if (_s.Quests.FirstOrDefault(x => x.Id == questId) is not { } q || ClerkInReach(world, clerkId) is not { } clerk) return;
         if (q.Kind is not (ItemQuestKinds.Supply or ItemQuestKinds.Gear or ItemQuestKinds.Find))
         {
@@ -45,11 +67,11 @@ public sealed partial class GuildSystem
             string problem = o.Worn ? "worn: take it off first"
                 : refuse >= 0 && o.StolenFrom == refuse ? $"stolen from {clerk.FactionName}"
                 : least > 0 && o.Worth < least ? $"worth too little (needs about {q.MinWorth:N0})" : "";
-            choices.Add(new HandInChoice(k, o.Name, o.Holder, o.Worth, o.Units, problem));
+            choices.Add(new HandInChoice(k, o.Name, o.Holder, o.Worth, o.Units, problem) { Who = o.Who, Cells = o.Cells });
         }
         _handInView = new HandInView(q.Id, q.Describe(), q.Need, choices);
         _dirty = true;
-        if (choices.Count == 0) RadiantQuestsMod.Toast($"None of your characters at the clerk carry anything for: {q.Describe()}.");
+        if (choices.Count == 0 && !quiet) RadiantQuestsMod.Toast($"None of your characters at the clerk carry anything for: {q.Describe()}.");
     }
 
     void HandInPick(World world, HandInPicked p)

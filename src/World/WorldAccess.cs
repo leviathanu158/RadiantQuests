@@ -697,7 +697,11 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
     /// window): who has them, the items, their worth (one), units in all, worn, stolen mark.
     /// </summary>
     public sealed record Offered(CharacterId Who, IReadOnlyList<Meitou.Simulation.Items.ItemInstance> Items, string Name, string Holder, int Worth,
-        int Units, bool Worn, int StolenFrom);
+        int Units, bool Worn, int StolenFrom)
+    {
+        /// <summary>Where its items sit in the holder's inventory window (Inventory.Shown's index, the cell's InventoryItemView.Index).</summary>
+        public IReadOnlyList<int> Cells { get; init; } = [];
+    }
 
     /// <summary>Every item of <paramref name="records"/> (untagged) your characters within <paramref name="reach"/> of <paramref name="at"/> carry, bags included, alike ones together.</summary>
     public List<Offered> Offer(World world, Vector2 at, float reach, IReadOnlySet<string> records) => Guard(Area.Items, new List<Offered>(), () =>
@@ -705,10 +709,15 @@ public sealed class WorldAccess(PopulationData data, PopulationSystem? populatio
         var list = new List<Offered>();
         foreach (var (s, id) in YoursWithin(world, at, reach))
             if (world.Characters.Cold(s) is { Inventory: { } inv } cold)
+            {
+                var cells = new Dictionary<Meitou.Simulation.Items.ItemInstance, int>(ReferenceEqualityComparer.Instance);
+                foreach (var (index, item) in inv.Shown()) cells.TryAdd(item, index);
                 foreach (var g in inv.All().Where(i => records.Contains(i.Record) && i.ModTag.Length == 0)
                     .GroupBy(i => (i.Record, Worth: WorthOf(i), Worn: Worn(inv, i), i.StolenFrom)))
                     list.Add(new Offered(id, [.. g], data.Db.Find(g.Key.Record)?.Name?.Trim() ?? g.Key.Record, cold.Name, g.Key.Worth,
-                        g.Sum(i => Math.Max(1, i.Quantity)), g.Key.Worn, g.Key.StolenFrom));
+                        g.Sum(i => Math.Max(1, i.Quantity)), g.Key.Worn, g.Key.StolenFrom)
+                    { Cells = [.. g.Where(cells.ContainsKey).Select(i => cells[i])] });
+            }
         return list;
     });
 

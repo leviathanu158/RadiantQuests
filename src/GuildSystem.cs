@@ -859,6 +859,7 @@ public sealed partial class GuildSystem : ITickSystem, IStateHashed, IModSaveDat
 
     void Publish(World world)
     {
+        RefreshHandIn(world);
         _dirty = false;
         _lastPublish = world.Tick;
         int rank = Rank;
