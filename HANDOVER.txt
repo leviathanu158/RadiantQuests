@@ -248,6 +248,10 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.10.4 (2026-11-25, his rule: ambushes may be groups too, random for variety): SpawnAmbush rolls AmbushGroupChance 0.65: a group
+(only kinds of which 2+ fit under the cap, a random size of those), else anything that fits (a lone strong beast included); no kind makes
+a group: SpawnAmbushAny. Tested: D courier 1 Robot Spider Mossy (cap 669), C 3 Dark Reavers (cap 2543), B 3 Mudcrab (cap 4861).
+
 STATE 0.10.3 (2026-11-25, step 1 checks on "Hand in Bug", Manual Combat off): VERIFIED in game: fight markers hidden when far and shown
 near (NearReveal); "Your squad spotted the Dust Bandit Loner, in Border Zone."; ambush cap (D courier: 1 Dark Reaver, cap 669; C: 1 Dust
 Hound, cap 2699; B: 1 Beak Turtle, cap 4011; people or hostile predators only). FIXED: AheadSpot found no ambush spot when the narrow cone

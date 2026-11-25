@@ -107,6 +107,9 @@ public sealed partial class GuildSystem : ITradeObserver
         var dice = new Dice(world.Seed ^ Rng.Mix((ulong)q.Id * 0x9E3779B97F4A7C15UL + 0x616D6275UL + ((ulong)q.Ambushes << 32)));
         bool stray = dice.Chance(_set.StrayChance);
         bool Hostile(string template) => Access.SpawnFaction(template) is var f && f >= 0 && f != _data.PlayerFaction && Access.Hostile(f, _data.PlayerFaction);
+        // Variety (his rule, 2026-11-25): about two in three ambushes are a group (a kind of which 2 or more fit the cap); the rest anything
+        // that fits, a single strong beast included.
+        bool group = dice.Chance(AmbushGroupChance);
         var choices = new List<(Target T, int Size, List<string> Templates)>();
         foreach (var t in Cat.Culls.Concat(Cat.Hunts))
         {
@@ -121,12 +124,45 @@ public sealed partial class GuildSystem : ITradeObserver
                 for (int n = Math.Max(1, lo); n <= Math.Min(hi, Catalog.MostCount); n++)
                     if (Catalog.Fight(unit, n) is var f && f <= cap && f >= cap * 0.25) sizes.Add(n);
             }
-            if (sizes.Count > 0) choices.Add((t, sizes.ElementAt(dice.Int(0, sizes.Count - 1)), templates));
+            var fit = group ? sizes.Where(n => n >= 2).ToList() : [.. sizes];
+            if (fit.Count > 0) choices.Add((t, fit[dice.Int(0, fit.Count - 1)], templates));
         }
+        // No kind makes a group here: whatever fits.
+        if (choices.Count == 0 && group) return SpawnAmbushAny(world, q, at, toward, cap, survey, dice, stray);
         if (choices.Count == 0) return 0;
         var (target, size, ok) = choices[dice.Int(0, choices.Count - 1)];
         if (SpawnNear(world, q, target, survey, want: size, most: size, ahead: toward, stray: stray, only: ok) is not { } g) return 0;
         RadiantQuestsMod.Detail($"quest #{q.Id}: ambush {q.Ambushes + 1}: {g.Size} {target.Name.Trim()}{(stray ? " (from afar)" : "")} ahead of {at.X:0},{at.Y:0} (cap {cap:0})");
+        return g.Key;
+    }
+
+    /// <summary>How often an ambush is a group rather than whatever fits (a lone strong beast included).</summary>
+    const double AmbushGroupChance = 0.65;
+
+    /// <summary>The ambush when no kind around makes a group under the cap: any size that fits.</summary>
+    ulong SpawnAmbushAny(World world, Quest q, Vector2 at, Vector2 toward, double cap, Survey survey, Dice dice, bool stray)
+    {
+        bool Hostile(string template) => Access.SpawnFaction(template) is var f && f >= 0 && f != _data.PlayerFaction && Access.Hostile(f, _data.PlayerFaction);
+        var choices = new List<(Target T, int Size, List<string> Templates)>();
+        foreach (var t in Cat.Culls.Concat(Cat.Hunts))
+        {
+            if (t.Kind == Catalog.Cull && !GeneralCull(t, -1)) continue;
+            var templates = (stray ? Survey.AnyTemplates(Cat, t) : survey.LocalTemplates(Cat, t)).Where(Hostile).ToList();
+            if (templates.Count == 0) continue;
+            double unit = CountQuest.Unit(t);
+            var sizes = new List<int>();
+            foreach (var id in templates)
+            {
+                var (lo, hi) = Cat.SpawnRange(id, t.Kind == Catalog.Hunt);
+                for (int n = Math.Max(1, lo); n <= Math.Min(hi, Catalog.MostCount); n++)
+                    if (Catalog.Fight(unit, n) is var f && f <= cap && f >= cap * 0.25 && !sizes.Contains(n)) sizes.Add(n);
+            }
+            if (sizes.Count > 0) choices.Add((t, sizes[dice.Int(0, sizes.Count - 1)], templates));
+        }
+        if (choices.Count == 0) return 0;
+        var (target, size, ok) = choices[dice.Int(0, choices.Count - 1)];
+        if (SpawnNear(world, q, target, survey, want: size, most: size, ahead: toward, stray: stray, only: ok) is not { } g) return 0;
+        RadiantQuestsMod.Detail($"quest #{q.Id}: ambush {q.Ambushes + 1}: {g.Size} {target.Name.Trim()} ahead of {at.X:0},{at.Y:0} (cap {cap:0}, no group fits)");
         return g.Key;
     }
 
