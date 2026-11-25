@@ -248,6 +248,14 @@ ITEM FRAMEWORK (2026-11-24, his design; BUILT, compiles, NOT INSTALLED, NOT TEST
  - NEXT: bump version, install, mod-check (pick-save), quick tests per type (test channel has no item commands yet: add e.g. "give",
    "carried"), check boards aren't flooded by item offers (they count as Present), then full scenario, then commit.
 
+STATE 0.11.2 (2026-11-25, progression bug test on "Mostly vanilla Test save"): VERIFIED: a second trial can't be taken while one runs;
+abandoning a trial is free and a new one is due at once; rep for several ranks promotes one trial at a time (D Sailback Poacher Loner,
+C 1 Beak Thing, B 5 Dire Hyena, Medium-nearest); titles per promotion; a due reward survives quicksave/quickload; a reward is claimed only
+once; cats purse (D 2700c) and backpack (C Sentry Backpack) rewards. FIXED: the medical reward gave Assassin's Daggers (a modded dagger
+whose own data marks it a first-aid kit, item function 1, and the most valuable "kit"): now item function 1 ITEMs only, the one sold in the
+most towns first -> "3 x Basic First Aid Kit". Test tool: "finish" now completes loner quests too. Test-channel "reward" can't take a key
+with a space (heavy body armour); the in-game button can.
+
 STATE 0.11.0 (2026-11-25, PROGRESSION part 1, his decisions; the rep store is next session): GuildSystem.Progression.cs. ENTRY: a newcomer
 (GuildState.Member false) can't take work until the entry trial (an easy E Hunt/Defeat brought in, the easiest candidate) is handed in.
 RANK TRIALS: Rank = min(Promoted, rank by rep); rep reaching the next rank posts "take the rank trial"; the trial is (0.11.1, his call) the Medium-nearest Hunt/

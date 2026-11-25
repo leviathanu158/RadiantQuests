@@ -153,7 +153,7 @@ public sealed partial class GuildSystem : ICombatHitObserver
     void TestFinishQuest(World world, int id)
     {
         if (_s.Quests.FirstOrDefault(x => x.Id == id) is not { } q) return;
-        if (q.Kind is GroupQuest.KindId or LairQuest.KindId)
+        if (q.Kind is GroupQuest.KindId or LairQuest.KindId || CountQuest.IsLoner(q))
         {
             q.Hit = true;
             q.Have = q.Need;

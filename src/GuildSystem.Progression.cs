@@ -144,8 +144,12 @@ public sealed partial class GuildSystem
         : null;
 
     /// <summary>The best sold item of a kind (a backpack, medicine): the most valuable one found in at least 2 towns' shops.</summary>
-    ItemFacts? BestOf(ItemKind kind) => ItemCat.Items.Values.Where(i => i.Kind == kind && i.ShopTowns >= 2)
-        .OrderByDescending(i => i.Value).ThenBy(i => i.Id, StringComparer.Ordinal).FirstOrDefault();
+    ItemFacts? BestOf(ItemKind kind) => ItemCat.Items.Values.Where(i => i.Kind == kind && i.ShopTowns >= 2
+            // Medicine: true first-aid kits only (item function 1, as Meitou's medics use them; his test gave 5 Assassin's Daggers before).
+            && (kind != ItemKind.Medical || i.Type == Meitou.Data.Fcs.FcsRecordType.Item && _data.Db.Find(i.Id)?.GetInt("item function") == 1))
+        // (Medicine by the shops that sell it, the kit everyone knows: a modded dagger marked as a first-aid kit was the most valuable "kit".)
+        .OrderByDescending(i => kind == ItemKind.Medical ? i.ShopTowns : 0).ThenByDescending(i => i.Value).ThenBy(i => i.Id, StringComparer.Ordinal)
+        .FirstOrDefault();
 
     /// <summary>The purse a rank's reward in cats holds: one and a half times the rank's best quest pay.</summary>
     static long RewardPurse(int rank) => (long)Math.Round(Ranks.Cats(rank).Max * 1.5 / 10) * 10;
